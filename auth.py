@@ -18,6 +18,8 @@ import aiohttp
 import certifi
 import jwt
 
+from session import create_ssl_context
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,12 +62,6 @@ class AuthManager:
         self.session: Optional[aiohttp.ClientSession] = None
         self.timeout = aiohttp.ClientTimeout(total=10.0)
 
-    async def _create_ssl_context(self) -> ssl.SSLContext:
-        """Create an SSL context using certifi's CA bundle in a separate thread."""
-        return await asyncio.to_thread(
-            ssl.create_default_context, cafile=certifi.where()
-        )
-
     async def _get_session(self) -> aiohttp.ClientSession:
         """
         Get or create an aiohttp ClientSession with a custom SSL context.
@@ -74,7 +70,7 @@ class AuthManager:
             aiohttp.ClientSession: The HTTP session.
         """
         if self.session is None:
-            ssl_context = await self._create_ssl_context()
+            ssl_context = await create_ssl_context()
             connector = aiohttp.TCPConnector(ssl=ssl_context)
             self.session = aiohttp.ClientSession(
                 timeout=self.timeout, connector=connector
@@ -216,10 +212,11 @@ class AuthManager:
                     _LOGGER.info("Access token refreshed successfully.")
                     await self.save_tokens()
                     return response_json
-                else:
-                    text = await response.text()
-                    _LOGGER.error("Failed to refresh token: %s", text)
-                    raise AuthError(f"Failed to refresh token: {text}")
+
+                text = await response.text()
+                _LOGGER.error("Failed to refresh token: %s", text)
+                raise AuthError(f"Failed to refresh token: {text}")
+
         except aiohttp.ClientResponseError as e:
             _LOGGER.error("HTTP error during token refresh: %s %s", e.status, e.message)
             raise AuthError(
