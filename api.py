@@ -5,13 +5,10 @@ This module provides the PetsSeriesClient class, which handles authentication,
 data retrieval, and device management for the PetsSeries application.
 """
 
-import asyncio
 import logging
-import ssl
 import urllib.parse
 
 import aiohttp
-import certifi
 
 from .auth import AuthManager
 from .models import (
@@ -62,7 +59,7 @@ class PetsSeriesClient:
                 timeout=self.timeout, connector=connector
             )
             _LOGGER.debug("aiohttp.ClientSession initialized with certifi CA bundle.")
-        return self.session
+        return self.session  # pylint: disable=duplicate-code
 
     async def initialize(self) -> None:
         """
