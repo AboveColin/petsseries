@@ -27,6 +27,7 @@ from .models import (
     Event,
     FoodLevelLowEvent,
 )
+from .config import Config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,17 +46,7 @@ class PetsSeriesClient:
         self.headers = {}
         self.headers_token = {}
         self.timeout = aiohttp.ClientTimeout(total=10.0)
-        self.user_info_url = (
-            "https://cdc.accounts.home.id/oidc/op/v1.0/"
-            "4_JGZWlP8eQHpEqkvQElolbA/userinfo"
-        )
-        self.consumer_url = (
-            "https://nbx-discovery.prod.eu-hs.iot.versuni.com/api/petsseries/consumer"
-        )
-        self.homes_url = (
-            "https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            "api/v1/home-management/available-homes"
-        )
+        self.config = Config()
 
     async def _create_ssl_context(self) -> ssl.SSLContext:
         """Create an SSL context using certifi's CA bundle in a separate thread."""
@@ -136,7 +127,7 @@ class PetsSeriesClient:
         session = await self._get_client()
         try:
             async with session.get(
-                self.user_info_url, headers=self.headers
+                self.config.user_info_url, headers=self.headers
             ) as response:
                 response.raise_for_status()
                 data = await response.json()
@@ -162,7 +153,9 @@ class PetsSeriesClient:
         await self._ensure_token_valid()
         session = await self._get_client()
         try:
-            async with session.get(self.consumer_url, headers=self.headers) as response:
+            async with session.get(
+                self.config.consumer_url, headers=self.headers
+            ) as response:
                 response.raise_for_status()
                 data = await response.json()
                 return Consumer(
@@ -182,7 +175,9 @@ class PetsSeriesClient:
         await self._ensure_token_valid()
         session = await self._get_client()
         try:
-            async with session.get(self.homes_url, headers=self.headers) as response:
+            async with session.get(
+                self.config.homes_url, headers=self.headers
+            ) as response:
                 response.raise_for_status()
                 homes_data = await response.json()
                 homes = [
@@ -307,9 +302,9 @@ class PetsSeriesClient:
         Get events for the selected home within a date range.
         """
         await self._ensure_token_valid()
-        if types not in Event.EventTypes and types != "none":
-            raise ValueError("Invalid event type '%s'" % types)
-        types_param = "&types=%s" % types if types != "none" else ""
+        if types not in Event.event_types and types != "none":
+            raise ValueError(f"Invalid event type '{types}'")
+        types_param = f"&types={types}" if types != "none" else ""
 
         from_date_str = from_date.isoformat()
         to_date_str = to_date.isoformat()
@@ -338,12 +333,6 @@ class PetsSeriesClient:
         except Exception as e:
             _LOGGER.error("Unexpected error in get_events: %s", e)
             raise
-
-    def get_event_types(self) -> list[str]:
-        """
-        Get the available event types.
-        """
-        return Event.EventTypes
 
     def parse_event(self, event: dict) -> Event:
         """
@@ -504,7 +493,7 @@ class PetsSeriesClient:
                 )
                 return simplified_settings
         _LOGGER.warning("No settings found for device %s", device_id)
-        raise ValueError("Device with ID %s not found." % device_id)
+        raise ValueError(f"Device with ID {device_id} not found")
 
     async def power_off_device(self, home: Home, device_id: str) -> bool:
         """
