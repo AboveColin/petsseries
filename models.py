@@ -5,7 +5,7 @@ This module defines the data structures used throughout the PetsSeries client,
 including users, homes, meals, devices, consumers, mode devices, and various event types.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
