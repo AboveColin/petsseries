@@ -107,7 +107,7 @@ from pytz import timezone
 from_date = datetime(2024, 9, 27, tzinfo=timezone("Europe/Amsterdam"))
 to_date = datetime(2024, 9, 28, tzinfo=timezone("Europe/Amsterdam"))
 
-events = await client.get_events(home, from_date, to_date, clustered=True)
+events = await client.get_events(home, from_date, to_date)
 for event in events:
     print(event)
 ```
@@ -186,7 +186,7 @@ async def main():
                 to_date = dt.datetime(2100, 9, 28, tzinfo=dt.timezone(dt.timedelta(hours=2)))
                 print(from_date, to_date)
 
-                events = await client.get_events(home, from_date, to_date, clustered=True)
+                events = await client.get_events(home, from_date, to_date)
                 # Possible eventTypes are: ["motion_detected", "meal_dispensed", "meal_upcoming", "food_level_low"]
                 for event in events:
                     if event.type == "meal_dispensed":
