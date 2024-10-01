@@ -19,5 +19,5 @@ setup(
         "Operating System :: OS Independent",
     ],
     long_description_content_type="text/markdown",
-    long_description=open("README.md").read(),  # pylint: disable=unspecified-encoding
+    long_description=open("README.md").read(),  # pylint: disable=unspecified-encoding, consider-using-with
 )
