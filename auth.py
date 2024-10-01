@@ -60,6 +60,7 @@ class AuthManager:
         self.timeout = aiohttp.ClientTimeout(total=10.0)
 
     async def _get_session(self) -> aiohttp.ClientSession:
+        # pylint: disable=duplicate-code
         """
         Get or create an aiohttp ClientSession with a custom SSL context.
 
@@ -73,7 +74,7 @@ class AuthManager:
                 timeout=self.timeout, connector=connector
             )
             _LOGGER.debug("aiohttp.ClientSession initialized with certifi CA bundle.")
-        return self.session  # pylint: disable=duplicate-code
+        return self.session
 
     async def load_tokens(self) -> None:
         """
