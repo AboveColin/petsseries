@@ -1,0 +1,4 @@
+aiohttp
+aiofiles
+certifi
+PyJWT
