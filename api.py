@@ -47,6 +47,7 @@ class PetsSeriesClient:
         self.config = Config()
 
     async def _get_client(self) -> aiohttp.ClientSession:
+        # pylint: disable=duplicate-code
         """
         Get an aiohttp.ClientSession with certifi's CA bundle.
 
@@ -59,7 +60,7 @@ class PetsSeriesClient:
                 timeout=self.timeout, connector=connector
             )
             _LOGGER.debug("aiohttp.ClientSession initialized with certifi CA bundle.")
-        return self.session  # pylint: disable=duplicate-code
+        return self.session
 
     async def initialize(self) -> None:
         """
