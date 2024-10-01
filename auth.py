@@ -6,19 +6,16 @@ as well as decoding JWTs to retrieve necessary information.
 """
 
 import time
-import asyncio
 import json
 import logging
 import os
-import ssl
 from typing import Optional, Dict
 
 import aiofiles
 import aiohttp
-import certifi
 import jwt
 
-from session import create_ssl_context
+from .session import create_ssl_context
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -76,7 +73,7 @@ class AuthManager:
                 timeout=self.timeout, connector=connector
             )
             _LOGGER.debug("aiohttp.ClientSession initialized with certifi CA bundle.")
-        return self.session
+        return self.session  # pylint: disable=duplicate-code
 
     async def load_tokens(self) -> None:
         """
