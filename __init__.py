@@ -1,3 +1,7 @@
+"""
+PetsSeriesClient module.
+"""
+
 from .api import PetsSeriesClient
 
-__all__ = ['PetsSeriesClient']
+__all__ = ["PetsSeriesClient"]
