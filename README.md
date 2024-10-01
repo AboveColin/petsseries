@@ -3,7 +3,7 @@
 _Disclaimer: This is an unofficial Python client for the PetsSeries API. It is not affiliated with, endorsed by, or in any way connected to the official PetsSeries, Versuni or Philips companies._
 
 ## Introduction
-The Unofficial PetsSeries API Client is a Python library designed to interact with the PetsSeries backend services. It provides asynchronous methods to manage user information, homes, devices, meals, events, and more. This client handles authentication, token refreshing, and provides a convenient interface for integrating PetsSeries functionalities into your Python applications.
+The Unofficial PetsSeries API Client is a Python library designed to interact with the PetsSeries backend services. It provides asynchronous methods to manage user information, homes, devices, meals, events, and device settings. This client handles authentication, token refreshing, and provides a convenient interface for integrating PetsSeries functionalities into your Python applications.
 
 ## Features
 - **Authentication Management:** Handles access and refresh tokens, including automatic refreshing when expired.
