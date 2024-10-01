@@ -28,6 +28,7 @@ from .models import (
     FoodLevelLowEvent,
 )
 from .config import Config
+from .session import create_ssl_context
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,12 +49,6 @@ class PetsSeriesClient:
         self.timeout = aiohttp.ClientTimeout(total=10.0)
         self.config = Config()
 
-    async def _create_ssl_context(self) -> ssl.SSLContext:
-        """Create an SSL context using certifi's CA bundle in a separate thread."""
-        return await asyncio.to_thread(
-            ssl.create_default_context, cafile=certifi.where()
-        )
-
     async def _get_client(self) -> aiohttp.ClientSession:
         """
         Get an aiohttp.ClientSession with certifi's CA bundle.
@@ -61,7 +56,7 @@ class PetsSeriesClient:
         Initializes the session if it doesn't exist.
         """
         if self.session is None:
-            ssl_context = await self._create_ssl_context()
+            ssl_context = await create_ssl_context()
             connector = aiohttp.TCPConnector(ssl=ssl_context)
             self.session = aiohttp.ClientSession(
                 timeout=self.timeout, connector=connector
@@ -461,7 +456,7 @@ class PetsSeriesClient:
                 if response.status == 204:
                     _LOGGER.info("Device %s settings updated successfully.", device_id)
                     return True
-                
+
                 text = await response.text()
                 _LOGGER.error("Failed to update device settings: %s", text)
                 response.raise_for_status()
