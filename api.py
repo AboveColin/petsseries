@@ -296,21 +296,19 @@ class PetsSeriesClient:
             raise
 
     async def get_events(
-        self, home: Home, from_date, to_date, clustered, types: str = "none"
+        self, home: Home, from_date, to_date, types: str = "none"
     ) -> list[Event]:
         """
         Get events for the selected home within a date range.
         """
+        clustered = "true"
         await self._ensure_token_valid()
         if types not in Event.event_types and types != "none":
             raise ValueError(f"Invalid event type '{types}'")
         types_param = f"&types={types}" if types != "none" else ""
 
-        from_date_str = from_date.isoformat()
-        to_date_str = to_date.isoformat()
-
-        from_date_encoded = urllib.parse.quote(from_date_str)
-        to_date_encoded = urllib.parse.quote(to_date_str)
+        from_date_encoded = urllib.parse.quote(from_date.isoformat())
+        to_date_encoded = urllib.parse.quote(to_date.isoformat())
 
         url = (
             f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
@@ -339,80 +337,81 @@ class PetsSeriesClient:
         Parse an event dictionary into an Event object.
         """
         event_type = event.get("type")
-        if event_type == "motion_detected":
-            return MotionEvent(
-                id=event.get("id"),
-                type=event_type,
-                source=event.get("source"),
-                time=event.get("time"),
-                url=event.get("url"),
-                cluster_id=event.get("clusterId"),
-                metadata=event.get("metadata"),
-                thumbnail_key=event.get("thumbnailKey"),
-                device_id=event.get("deviceId"),
-                device_name=event.get("deviceName"),
-                thumbnail_url=event.get("thumbnailUrl"),
-                product_ctn=event.get("productCtn"),
-                device_external_id=event.get("deviceExternalId"),
-            )
-        elif event_type == "meal_dispensed":
-            return MealDispensedEvent(
-                id=event.get("id"),
-                type=event_type,
-                source=event.get("source"),
-                time=event.get("time"),
-                url=event.get("url"),
-                cluster_id=event.get("clusterId"),
-                metadata=event.get("metadata"),
-                meal_name=event.get("mealName"),
-                device_id=event.get("deviceId"),
-                meal_url=event.get("mealUrl"),
-                meal_amount=event.get("mealAmount"),
-                device_name=event.get("deviceName"),
-                device_external_id=event.get("deviceExternalId"),
-                product_ctn=event.get("productCtn"),
-            )
-        elif event_type == "meal_upcoming":
-            return MealUpcomingEvent(
-                id=event.get("id"),
-                type=event_type,
-                source=event.get("source"),
-                time=event.get("time"),
-                url=event.get("url"),
-                cluster_id=event.get("clusterId"),
-                metadata=event.get("metadata"),
-                meal_name=event.get("mealName"),
-                device_id=event.get("deviceId"),
-                meal_url=event.get("mealUrl"),
-                meal_amount=event.get("mealAmount"),
-                device_name=event.get("deviceName"),
-                device_external_id=event.get("deviceExternalId"),
-                product_ctn=event.get("productCtn"),
-            )
-        elif event_type == "food_level_low":
-            return FoodLevelLowEvent(
-                id=event.get("id"),
-                type=event_type,
-                source=event.get("source"),
-                time=event.get("time"),
-                url=event.get("url"),
-                cluster_id=event.get("clusterId"),
-                metadata=event.get("metadata"),
-                device_id=event.get("deviceId"),
-                device_name=event.get("deviceName"),
-                product_ctn=event.get("productCtn"),
-                device_external_id=event.get("deviceExternalId"),
-            )
-        else:
-            _LOGGER.warning("Unknown event type: %s", event_type)
-            # Generic event
-            return Event(
-                id=event["id"],
-                type=event_type,
-                source=event["source"],
-                time=event["time"],
-                url=event["url"],
-            )
+        match event_type:
+            case "motion_detected":
+                return MotionEvent(
+                    id=event.get("id"),
+                    type=event_type,
+                    source=event.get("source"),
+                    time=event.get("time"),
+                    url=event.get("url"),
+                    cluster_id=event.get("clusterId"),
+                    metadata=event.get("metadata"),
+                    thumbnail_key=event.get("thumbnailKey"),
+                    device_id=event.get("deviceId"),
+                    device_name=event.get("deviceName"),
+                    thumbnail_url=event.get("thumbnailUrl"),
+                    product_ctn=event.get("productCtn"),
+                    device_external_id=event.get("deviceExternalId"),
+                )
+            case "meal_dispensed":
+                return MealDispensedEvent(
+                    id=event.get("id"),
+                    type=event_type,
+                    source=event.get("source"),
+                    time=event.get("time"),
+                    url=event.get("url"),
+                    cluster_id=event.get("clusterId"),
+                    metadata=event.get("metadata"),
+                    meal_name=event.get("mealName"),
+                    device_id=event.get("deviceId"),
+                    meal_url=event.get("mealUrl"),
+                    meal_amount=event.get("mealAmount"),
+                    device_name=event.get("deviceName"),
+                    device_external_id=event.get("deviceExternalId"),
+                    product_ctn=event.get("productCtn"),
+                )
+            case "meal_upcoming":
+                return MealUpcomingEvent(
+                    id=event.get("id"),
+                    type=event_type,
+                    source=event.get("source"),
+                    time=event.get("time"),
+                    url=event.get("url"),
+                    cluster_id=event.get("clusterId"),
+                    metadata=event.get("metadata"),
+                    meal_name=event.get("mealName"),
+                    device_id=event.get("deviceId"),
+                    meal_url=event.get("mealUrl"),
+                    meal_amount=event.get("mealAmount"),
+                    device_name=event.get("deviceName"),
+                    device_external_id=event.get("deviceExternalId"),
+                    product_ctn=event.get("productCtn"),
+                )
+            case "food_level_low":
+                return FoodLevelLowEvent(
+                    id=event.get("id"),
+                    type=event_type,
+                    source=event.get("source"),
+                    time=event.get("time"),
+                    url=event.get("url"),
+                    cluster_id=event.get("clusterId"),
+                    metadata=event.get("metadata"),
+                    device_id=event.get("deviceId"),
+                    device_name=event.get("deviceName"),
+                    product_ctn=event.get("productCtn"),
+                    device_external_id=event.get("deviceExternalId"),
+                )
+            case _:
+                _LOGGER.warning("Unknown event type: %s", event_type)
+                # Generic event
+                return Event(
+                    id=event["id"],
+                    type=event_type,
+                    source=event["source"],
+                    time=event["time"],
+                    url=event["url"],
+                )
 
     async def get_event(self, home: Home, event_id: str) -> Event:
         """
@@ -462,10 +461,10 @@ class PetsSeriesClient:
                 if response.status == 204:
                     _LOGGER.info("Device %s settings updated successfully.", device_id)
                     return True
-                else:
-                    text = await response.text()
-                    _LOGGER.error("Failed to update device settings: %s", text)
-                    response.raise_for_status()
+                
+                text = await response.text()
+                _LOGGER.error("Failed to update device settings: %s", text)
+                response.raise_for_status()
         except aiohttp.ClientResponseError as e:
             _LOGGER.error(
                 "Failed to update device settings: %s %s", e.status, e.message
