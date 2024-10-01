@@ -296,7 +296,7 @@ class PetsSeriesClient:
         """
         clustered = "true"
         await self._ensure_token_valid()
-        if types not in Event.event_types and types != "none":
+        if types not in Event.get_event_types() and types != "none":
             raise ValueError(f"Invalid event type '{types}'")
         types_param = f"&types={types}" if types != "none" else ""
 
