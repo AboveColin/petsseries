@@ -5,7 +5,8 @@ This module defines the data structures used throughout the PetsSeries client,
 including users, homes, meals, devices, consumers, mode devices, and various event types.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import Enum
 from typing import Dict, List, Optional
 
 
@@ -155,6 +156,15 @@ class ModeDevice:
     settings: Dict[str, Dict[str, any]]
 
 
+class EventType(Enum):
+    """Enum for event types in the PetsSeries system."""
+
+    MOTION_DETECTED = "motion_detected"
+    MEAL_DISPENSED = "meal_dispensed"
+    MEAL_UPCOMING = "meal_upcoming"
+    FOOD_LEVEL_LOW = "food_level_low"
+
+
 @dataclass
 class Event:
     """
@@ -169,24 +179,19 @@ class Event:
     """
 
     id: str
-    type: str
+    type: EventType
     source: str
     time: str
     url: str
 
-    event_types: List[str] = field(
-        init=False,
-        default_factory=lambda: [
-            "motion_detected",
-            "meal_dispensed",
-            "meal_upcoming",
-            "food_level_low",
-        ],
-    )
-
     def __repr__(self) -> str:
         """Return a string representation of the event."""
         return f"type={self.type} time={self.time}"
+
+    @classmethod
+    def get_event_types(cls) -> List[EventType]:
+        """Retrieve the event types."""
+        return list(EventType)
 
 
 @dataclass
