@@ -63,6 +63,7 @@ class Home:
 
 @dataclass
 class Meal:
+    # pylint: disable=too-many-instance-attributes
     """
     Represents a meal scheduled in the PetsSeries system.
 
@@ -89,6 +90,7 @@ class Meal:
 
 @dataclass
 class Device:
+    # pylint: disable=too-many-instance-attributes
     """
     Represents a device in the PetsSeries system.
 
@@ -171,7 +173,7 @@ class Event:
     source: str
     time: str
     url: str
-    
+
     event_types: List[str] = field(
         init=False,
         default_factory=lambda: [
@@ -189,6 +191,7 @@ class Event:
 
 @dataclass
 class MotionEvent(Event):
+    # pylint: disable=too-many-instance-attributes
     """
     Represents a motion detected event in the PetsSeries system.
 
@@ -220,6 +223,7 @@ class MotionEvent(Event):
 
 @dataclass
 class MealDispensedEvent(Event):
+    # pylint: disable=too-many-instance-attributes
     """
     Represents a meal dispensed event in the PetsSeries system.
 
@@ -248,6 +252,7 @@ class MealDispensedEvent(Event):
 
 @dataclass
 class MealUpcomingEvent(Event):
+    # pylint: disable=too-many-instance-attributes
     """
     Represents an upcoming meal event in the PetsSeries system.
 
