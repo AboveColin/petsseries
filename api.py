@@ -225,6 +225,63 @@ class PetsSeriesClient:
         except Exception as e:
             _LOGGER.error("Unexpected error in get_meals: %s", e)
             raise
+    
+    async def update_meal(self, home: Home, meal: Meal) -> Meal:
+        """
+        Update an existing meal for the specified home.
+
+        Args:
+            home (Home): The home where the meal is located.
+            meal (Meal): The Meal object containing updated information. The `id` field must be set.
+
+        Returns:
+            Meal: The updated Meal object.
+
+        Raises:
+            ValueError: If the meal ID is not provided.
+            aiohttp.ClientResponseError: If the HTTP request fails.
+            Exception: For any unexpected errors.
+        """
+        await self._ensure_token_valid()
+
+        if not meal.id:
+            raise ValueError("Meal ID must be provided for updating a meal.")
+
+        url = f"{self.config.base_url}/api/homes/{home.id}/meals/{meal.id}"
+
+        # Prepare the payload with updated fields
+        payload = {
+            "name": meal.name,
+            "portionAmount": meal.portion_amount,
+            "feedTime": meal.feed_time.isoformat(),
+            "repeatDays": meal.repeat_days or [1, 2, 3, 4, 5, 6, 7],
+        }
+
+        session = await self._get_client()
+        try:
+            async with session.patch(url, headers=self.headers, json=payload) as response:
+                if response.status == 200:
+                    updated_data = await response.json()
+                    _LOGGER.info("Meal %s updated successfully.", meal.id)
+                    return Meal(
+                        id=updated_data["id"],
+                        name=updated_data["name"],
+                        portion_amount=updated_data["portionAmount"],
+                        feed_time=updated_data["feedTime"],
+                        repeat_days=updated_data.get("repeatDays", [1, 2, 3, 4, 5, 6, 7]),
+                        device_id=updated_data["deviceId"],
+                        enabled=updated_data.get("enabled", True),
+                        url=updated_data["url"],
+                    )
+                text = await response.text()
+                _LOGGER.error("Failed to update meal %s: %s %s", meal.id, response.status, text)
+                response.raise_for_status()
+        except aiohttp.ClientResponseError as e:
+            _LOGGER.error("Failed to update meal %s: %s %s", meal.id, e.status, e.message)
+            raise
+        except Exception as e:
+            _LOGGER.error("Unexpected error in update_meal: %s", e)
+            raise
 
     async def create_meal(
         self,
@@ -252,6 +309,8 @@ class PetsSeriesClient:
         await self._ensure_token_valid()
         if meal.repeat_days is None:
             repeat_days = [1, 2, 3, 4, 5, 6, 7]
+        else:
+            repeat_days = meal.repeat_days
 
         payload = {
             "deviceId": meal.device_id,
