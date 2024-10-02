@@ -24,6 +24,10 @@ from .models import (
     MealUpcomingEvent,
     FoodLevelLowEvent,
     MealEnabledEvent,
+    FilterReplacementDueEvent,
+    FoodOutletStuckEvent,
+    DeviceOfflineEvent,
+    DeviceOnlineEvent,
 )
 from .config import Config
 from .session import create_ssl_context
@@ -259,7 +263,9 @@ class PetsSeriesClient:
 
         session = await self._get_client()
         try:
-            async with session.patch(url, headers=self.headers, json=payload) as response:
+            async with session.patch(
+                url, headers=self.headers, json=payload
+            ) as response:
                 if response.status == 200:
                     updated_data = await response.json()
                     _LOGGER.info("Meal %s updated successfully.", meal.id)
@@ -268,16 +274,22 @@ class PetsSeriesClient:
                         name=updated_data["name"],
                         portion_amount=updated_data["portionAmount"],
                         feed_time=updated_data["feedTime"],
-                        repeat_days=updated_data.get("repeatDays", [1, 2, 3, 4, 5, 6, 7]),
+                        repeat_days=updated_data.get(
+                            "repeatDays", [1, 2, 3, 4, 5, 6, 7]
+                        ),
                         device_id=updated_data["deviceId"],
                         enabled=updated_data.get("enabled", True),
                         url=updated_data["url"],
                     )
                 text = await response.text()
-                _LOGGER.error("Failed to update meal %s: %s %s", meal.id, response.status, text)
+                _LOGGER.error(
+                    "Failed to update meal %s: %s %s", meal.id, response.status, text
+                )
                 response.raise_for_status()
         except aiohttp.ClientResponseError as e:
-            _LOGGER.error("Failed to update meal %s: %s %s", meal.id, e.status, e.message)
+            _LOGGER.error(
+                "Failed to update meal %s: %s %s", meal.id, e.status, e.message
+            )
             raise
         except Exception as e:
             _LOGGER.error("Unexpected error in update_meal: %s", e)
@@ -673,6 +685,62 @@ class PetsSeriesClient:
                     device_id=event.get("deviceId"),
                     device_name=event.get("deviceName"),
                     meal_repeat_days=event.get("mealRepeatDays"),
+                )
+            case "filter_replacement_due":
+                return FilterReplacementDueEvent(
+                    id=event.get("id"),
+                    type=event_type,
+                    source=event.get("source"),
+                    time=event.get("time"),
+                    url=event.get("url"),
+                    cluster_id=event.get("clusterId"),
+                    metadata=event.get("metadata"),
+                    device_id=event.get("deviceId"),
+                    device_name=event.get("deviceName"),
+                    product_ctn=event.get("productCtn"),
+                    device_external_id=event.get("deviceExternalId"),
+                )
+            case "food_outlet_stuck":
+                return FoodOutletStuckEvent(
+                    id=event.get("id"),
+                    type=event_type,
+                    source=event.get("source"),
+                    time=event.get("time"),
+                    url=event.get("url"),
+                    cluster_id=event.get("clusterId"),
+                    metadata=event.get("metadata"),
+                    device_id=event.get("deviceId"),
+                    device_name=event.get("deviceName"),
+                    product_ctn=event.get("productCtn"),
+                    device_external_id=event.get("deviceExternalId"),
+                )
+            case "device_offline":
+                return DeviceOfflineEvent(
+                    id=event.get("id"),
+                    type=event_type,
+                    source=event.get("source"),
+                    time=event.get("time"),
+                    url=event.get("url"),
+                    cluster_id=event.get("clusterId"),
+                    metadata=event.get("metadata"),
+                    device_id=event.get("deviceId"),
+                    device_name=event.get("deviceName"),
+                    product_ctn=event.get("productCtn"),
+                    device_external_id=event.get("deviceExternalId"),
+                )
+            case "device_online":
+                return DeviceOnlineEvent(
+                    id=event.get("id"),
+                    type=event_type,
+                    source=event.get("source"),
+                    time=event.get("time"),
+                    url=event.get("url"),
+                    cluster_id=event.get("clusterId"),
+                    metadata=event.get("metadata"),
+                    device_id=event.get("deviceId"),
+                    device_name=event.get("deviceName"),
+                    product_ctn=event.get("productCtn"),
+                    device_external_id=event.get("deviceExternalId"),
                 )
             case _:
                 _LOGGER.warning("Unknown event type: %s", event_type)
