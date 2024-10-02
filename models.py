@@ -164,6 +164,10 @@ class EventType(Enum):
     MEAL_UPCOMING = "meal_upcoming"
     FOOD_LEVEL_LOW = "food_level_low"
     MEAL_ENABLED = "meal_enabled"
+    FILTER_REPLACEMENT_DUE = "filter_replacement_due"
+    FOOD_OUTLET_STUCK = "food_outlet_stuck"
+    DEVICE_ONLINE = "device_online"
+    DEVICE_OFFLINE = "device_offline"
 
 
 @dataclass
@@ -357,3 +361,109 @@ class MealEnabledEvent(Event):
             f"device_id={self.device_id} "
             f"device_name={self.device_name}"
         )
+
+
+@dataclass
+class FilterReplacementDue(Event):
+    """
+    Represents a filter replacement due event in the PetsSeries system.
+
+    Attributes:
+        cluster_id (Optional[str]): Cluster identifier.
+        metadata (Optional[dict]): Additional metadata.
+        device_id (Optional[str]): Device identifier.
+        device_name (Optional[str]): Device name.
+        product_ctn (Optional[str]): Product CTN of the device.
+        device_external_id (Optional[str]): External identifier of the device.
+    """
+
+    cluster_id: Optional[str]
+    metadata: Optional[dict]
+    device_id: Optional[str]
+    device_name: Optional[str]
+    product_ctn: Optional[str]
+    device_external_id: Optional[str]
+
+    def __repr__(self) -> str:
+        """Return a string representation of the filter replacement due event."""
+        base_repr = super().__repr__()
+        return f"{base_repr} device_id={self.device_id} device_name={self.device_name}"
+
+
+@dataclass
+class FoodOutletStuckEvent(Event):
+    """
+    Represents a food outlet stuck event in the PetsSeries system.
+
+    Attributes:
+        cluster_id (Optional[str]): Cluster identifier.
+        metadata (Optional[dict]): Additional metadata.
+        device_id (Optional[str]): Device identifier.
+        device_name (Optional[str]): Device name.
+        product_ctn (Optional[str]): Product CTN of the device.
+        device_external_id (Optional[str]): External identifier of the device.
+    """
+
+    cluster_id: Optional[str]
+    metadata: Optional[dict]
+    device_id: Optional[str]
+    device_name: Optional[str]
+    product_ctn: Optional[str]
+    device_external_id: Optional[str]
+
+    def __repr__(self) -> str:
+        """Return a string representation of the food outlet stuck event."""
+        base_repr = super().__repr__()
+        return f"{base_repr} device_id={self.device_id} device_name={self.device_name}"
+
+
+class DeviceOnline(Event):
+    """
+    Represents a device online event in the PetsSeries system.
+
+    Attributes:
+        cluster_id (Optional[str]): Cluster identifier.
+        metadata (Optional[dict]): Additional metadata.
+        device_id (Optional[str]): Device identifier.
+        device_name (Optional[str]): Device name.
+        product_ctn (Optional[str]): Product CTN of the device.
+        device_external_id (Optional[str]): External identifier of the device.
+    """
+
+    cluster_id: Optional[str]
+    metadata: Optional[dict]
+    device_id: Optional[str]
+    device_name: Optional[str]
+    product_ctn: Optional[str]
+    device_external_id: Optional[str]
+
+    def __repr__(self) -> str:
+        """Return a string representation of the device online event."""
+        base_repr = super().__repr__()
+        return f"{base_repr} device_id={self.device_id} device_name={self.device_name}"
+
+
+class DeviceOffline(Event):
+    """
+    Represents a device offline event in the PetsSeries system.
+
+    Attributes:
+        cluster_id (Optional[str]): Cluster identifier.
+        metadata (Optional[dict]): Additional metadata.
+        device_id (Optional[str]): Device identifier.
+        device_name (Optional[str]): Device name.
+        product_ctn (Optional[str]): Product CTN of the device.
+        device_external_id (Optional[str]): External identifier of the device.
+    """
+
+    cluster_id: Optional[str]
+    metadata: Optional[dict]
+    device_id: Optional[str]
+    device_name: Optional[str]
+    product_ctn: Optional[str]
+    device_external_id: Optional[str]
+
+    def __repr__(self) -> str:
+        """Return a string representation of the device offline event."""
+        base_repr = super().__repr__()
+        return f"{base_repr} device_id={self.device_id} device_name={self.device_name}"
