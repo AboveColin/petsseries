@@ -5,7 +5,6 @@ This module provides the PetsSeriesClient class, which handles authentication,
 data retrieval, and device management for the PetsSeries application.
 """
 
-import datetime
 import logging
 import urllib.parse
 
@@ -226,31 +225,23 @@ class PetsSeriesClient:
         except Exception as e:
             _LOGGER.error("Unexpected error in get_meals: %s", e)
             raise
-    
-    # pylint: disable=too-many-arguments
+
     async def create_meal(
         self,
         home: Home,
-        device_id: str,
-        feed_time: datetime.time,
-        name: str = "Meal",
-        portion_amount: int = 1,
-        repeat_days: list[int] = None,
+        meal: Meal,
     ) -> Meal:
-        # pylint: disable=too-many-arguments
         """
         Create a new meal for the specified home and device.
 
         Args:
             home (Home): The home where the meal will be created.
-            device_id (str): The ID of the device dispensing the meal.
-            feed_time (datetime.time): The time the meal should be dispensed.
-            name (str, optional): The name of the meal. Defaults to "Meal".
-            portion_amount (int, optional): The amount of food per portion. Defaults to 1.
-            repeat_days (list[int], optional): Days of the week to repeat the meal
-            (1=Monday,...,7=Sunday).
-                                                Defaults to [1, 2, 3, 4, 5, 6, 7].
-
+            meal should contain the following attributes:
+                - name: The name of the meal.
+                - portion_amount: The amount of food per portion.
+                - feed_time: The time the meal should be dispensed.
+                - device_id: The ID of the device dispensing the meal.
+                - repeat_days: Days of the week to repeat the meal (1=Monday,...,7=Sunday).
         Returns:
             Meal: The created Meal object.
 
@@ -259,15 +250,14 @@ class PetsSeriesClient:
             Exception: For any unexpected errors.
         """
         await self._ensure_token_valid()
-
-        if repeat_days is None:
+        if meal.repeat_days is None:
             repeat_days = [1, 2, 3, 4, 5, 6, 7]
 
         payload = {
-            "deviceId": device_id,
-            "feedTime": feed_time.isoformat(),
-            "name": name,
-            "portionAmount": portion_amount,
+            "deviceId": meal.device_id,
+            "feedTime": meal.feed_time.isoformat(),
+            "name": meal.name,
+            "portionAmount": meal.portion_amount,
             "repeatDays": repeat_days,
         }
 
@@ -292,11 +282,11 @@ class PetsSeriesClient:
 
                     return Meal(
                         id=meal_id,
-                        name=name,
-                        portion_amount=portion_amount,
-                        feed_time=feed_time.isoformat(),
+                        name=meal.name,
+                        portion_amount=meal.portion_amount,
+                        feed_time=meal.feed_time.isoformat(),
                         repeat_days=repeat_days,
-                        device_id=device_id,
+                        device_id=meal.device_id,
                         enabled=True,
                         url=location,
                     )
