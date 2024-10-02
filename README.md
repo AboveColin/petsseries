@@ -1,4 +1,4 @@
-# Unofficial PetsSeries API Client
+ee43wr# Unofficial PetsSeries API Client
 
 _Disclaimer: This is an unofficial Python client for the PetsSeries API. It is not affiliated with, endorsed by, or in any way connected to the official PetsSeries, Versuni or Philips companies._
 
@@ -12,7 +12,6 @@ The Unofficial PetsSeries API Client is a Python library designed to interact wi
 - **Easy Integration:** Simple initialization and usage patterns for quick integration into projects.
 
 ## Features to be Added
-- **Schedule Management:** Methods to manage schedules
 - **Camera Feed Access:** Methods to access camera feeds
 - **Food Dispenser Control:** Methods to control food dispensers
 
