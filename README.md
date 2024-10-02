@@ -3,7 +3,7 @@
 _Disclaimer: This is an unofficial Python client for the PetsSeries API. It is not affiliated with, endorsed by, or in any way connected to the official PetsSeries, Versuni or Philips companies._
 
 ## Introduction
-The Unofficial PetsSeries API Client is a Python library designed to interact with the PetsSeries backend services. It provides asynchronous methods to manage user information, homes, devices, meals, events, and device settings. This client handles authentication, token refreshing, and provides a convenient interface for integrating PetsSeries (PAW5320 & PAW3210) functionalities into your Python applications.
+The Unofficial PetsSeries API Client is a Python library designed to interact with the PetsSeries backend services. It provides asynchronous methods to manage user information, homes, devices, meals, events, and more. This client handles authentication, token refreshing, and provides a convenient interface for integrating PetsSeries functionalities into your Python applications.
 
 ## Features
 - **Authentication Management:** Handles access and refresh tokens, including automatic refreshing when expired.
@@ -110,6 +110,47 @@ to_date = datetime(2024, 9, 28, tzinfo=timezone("Europe/Amsterdam"))
 events = await client.get_events(home, from_date, to_date)
 for event in events:
     print(event)
+```
+
+### Get Meals
+```python
+for home in homes:
+    meals = await client.get_meals(home)
+    for meal in meals:
+        print(meal)
+```
+
+#### Create Meal
+```python
+# Define the meal details
+meal_name = "Dinner"
+portion_amount = 10  # 1 - 20 portions
+feed_time = datetime.combine(datetime.today(), time(hour=18, minute=30))  # 6:30 PM
+repeat_days = [1, 2, 3, 4, 5, 6, 7]  # Every day of the week
+
+# Create a Meal instance
+meal = Meal(
+    id="",  # ID will be assigned by the server
+    name=meal_name,
+    portion_amount=portion_amount,
+    feed_time=feed_time,
+    repeat_days=repeat_days,
+    device_id=device.id,
+    enabled=True,
+    url=""  # URL will be assigned by the server
+)
+
+try:
+    created_meal = await client.create_meal(home, meal)
+    print(f"Meal '{created_meal.name}' created successfully with ID: {created_meal.id}")
+    print(f"Feed Time: {created_meal.feed_time}")
+    print(f"Portion Amount: {created_meal.portion_amount}")
+    print(f"Repeat Days: {created_meal.repeat_days}")
+    print(f"Device ID: {created_meal.device_id}")
+    print(f"Enabled: {created_meal.enabled}")
+    print(f"Meal URL: {created_meal.url}")
+except Exception as e:
+    print(f"An error occurred while creating the meal: {e}")
 ```
 
 ### Managing Devices
