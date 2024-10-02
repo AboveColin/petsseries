@@ -598,6 +598,7 @@ class PetsSeriesClient:
             _LOGGER.error("Unexpected error in get_events: %s", e)
             raise
 
+    # pylint: disable=too-many-return-statements
     def parse_event(self, event: dict) -> Event:
         """
         Parse an event dictionary into an Event object.
