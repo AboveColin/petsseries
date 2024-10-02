@@ -5,6 +5,7 @@ This module provides the PetsSeriesClient class, which handles authentication,
 data retrieval, and device management for the PetsSeries application.
 """
 
+import datetime
 import logging
 import urllib.parse
 
@@ -18,11 +19,12 @@ from .models import (
     Device,
     Consumer,
     ModeDevice,
+    Event,
     MotionEvent,
     MealDispensedEvent,
     MealUpcomingEvent,
-    Event,
     FoodLevelLowEvent,
+    MealEnabledEvent,
 )
 from .config import Config
 from .session import create_ssl_context
@@ -31,6 +33,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class PetsSeriesClient:
+    # pylint: disable=too-many-public-methods
     """
     Client for interacting with the PetsSeries API.
 
@@ -70,9 +73,9 @@ class PetsSeriesClient:
         if await self.auth.is_token_expired():
             _LOGGER.info("Access token expired, refreshing...")
             await self.auth.refresh_access_token()
-        await self.refresh_headers()
+        await self._refresh_headers()
 
-    async def refresh_headers(self) -> None:
+    async def _refresh_headers(self) -> None:
         """
         Refresh the headers with the latest access token.
         """
@@ -110,7 +113,7 @@ class PetsSeriesClient:
         if await self.auth.is_token_expired():
             _LOGGER.info("Access token expired, refreshing...")
             await self.auth.refresh_access_token()
-            await self.refresh_headers()
+            await self._refresh_headers()
 
     async def get_user_info(self) -> User:
         """
@@ -197,10 +200,7 @@ class PetsSeriesClient:
         Get meals for the selected home.
         """
         await self._ensure_token_valid()
-        url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/meals"
-        )
+        url = f"{self.config.base_url}/api/homes/{home.id}/meals"
         session = await self._get_client()
         try:
             async with session.get(url, headers=self.headers) as response:
@@ -225,6 +225,217 @@ class PetsSeriesClient:
             raise
         except Exception as e:
             _LOGGER.error("Unexpected error in get_meals: %s", e)
+            raise
+
+    async def create_meal(  # pylint: disable=too-many-arguments
+        self,
+        home: Home,
+        device_id: str,
+        feed_time: datetime.time,
+        name: str = "Meal",
+        portion_amount: int = 1,
+        repeat_days: list[int] = None,
+    ) -> Meal:
+        """
+        Create a new meal for the specified home and device.
+
+        Args:
+            home (Home): The home where the meal will be created.
+            device_id (str): The ID of the device dispensing the meal.
+            feed_time (datetime.time): The time the meal should be dispensed.
+            name (str, optional): The name of the meal. Defaults to "Meal".
+            portion_amount (int, optional): The amount of food per portion. Defaults to 1.
+            repeat_days (list[int], optional): Days of the week to repeat the meal
+            (1=Monday,...,7=Sunday).
+                                                Defaults to [1, 2, 3, 4, 5, 6, 7].
+
+        Returns:
+            Meal: The created Meal object.
+
+        Raises:
+            aiohttp.ClientResponseError: If the HTTP request fails.
+            Exception: For any unexpected errors.
+        """
+        await self._ensure_token_valid()
+
+        if repeat_days is None:
+            repeat_days = [1, 2, 3, 4, 5, 6, 7]
+
+        payload = {
+            "deviceId": device_id,
+            "feedTime": feed_time.isoformat(),
+            "name": name,
+            "portionAmount": portion_amount,
+            "repeatDays": repeat_days,
+        }
+
+        session = await self._get_client()
+        try:
+            async with session.post(
+                f"{self.config.base_url}/api/homes/{home.id}/meals",
+                headers=self.headers,
+                json=payload,
+            ) as response:
+
+                if response.status == 201:
+                    location = response.headers.get("Location")
+                    if not location:
+                        _LOGGER.error("Location header missing in response.")
+
+                    # Extract the meal ID from the Location URL
+                    parsed_url = urllib.parse.urlparse(location)
+                    meal_id = parsed_url.path.split("/")[-1]
+
+                    _LOGGER.info("Meal created successfully with ID: %s", meal_id)
+
+                    return Meal(
+                        id=meal_id,
+                        name=name,
+                        portion_amount=portion_amount,
+                        feed_time=feed_time.isoformat(),
+                        repeat_days=repeat_days,
+                        device_id=device_id,
+                        enabled=True,
+                        url=location,
+                    )
+                text = await response.text()
+                _LOGGER.error("Failed to create meal: %s %s", response.status, text)
+                response.raise_for_status()
+        except aiohttp.ClientResponseError as e:
+            _LOGGER.error("Failed to create meal: %s %s", e.status, e.message)
+            raise
+        except Exception as e:
+            _LOGGER.error("Unexpected error in create_meal: %s", e)
+            raise
+
+    async def set_meal_enabled(self, home: Home, meal_id: str, enabled: bool) -> bool:
+        """
+        Enable or disable a specific meal.
+
+        Args:
+            home (Home): The home where the meal is located.
+            meal_id (str): The ID of the meal to update.
+            enabled (bool): The desired enabled state of the meal.
+
+        Returns:
+            bool: True if the update was successful, False otherwise.
+
+        Raises:
+            aiohttp.ClientResponseError: If the HTTP request fails.
+            Exception: For any unexpected errors.
+        """
+        await self._ensure_token_valid()
+        url = f"{self.config.base_url}/api/homes/{home.id}/meals/{meal_id}"
+
+        payload = {"enabled": enabled}
+
+        session = await self._get_client()
+        try:
+            async with session.patch(
+                url, headers=self.headers, json=payload
+            ) as response:
+                if response.status == 204:
+                    _LOGGER.info(
+                        "Meal %s has been %s successfully.",
+                        meal_id,
+                        "enabled" if enabled else "disabled",
+                    )
+                    return True
+                else:
+                    text = await response.text()
+                    _LOGGER.error(
+                        "Failed to %s meal %s: %s %s",
+                        "enable" if enabled else "disable",
+                        meal_id,
+                        response.status,
+                        text,
+                    )
+                    response.raise_for_status()
+        except aiohttp.ClientResponseError as e:
+            _LOGGER.error(
+                "HTTP error while trying to %s meal %s: %s %s",
+                "enable" if enabled else "disable",
+                meal_id,
+                e.status,
+                e.message,
+            )
+            raise
+        except Exception as e:
+            _LOGGER.error("Unexpected error in set_meal_enabled: %s", e)
+            raise
+
+    async def enable_meal(self, home: Home, meal_id: str) -> bool:
+        """
+        Enable a specific meal.
+
+        Args:
+            home (Home): The home where the meal is located.
+            meal_id (str): The ID of the meal to enable.
+
+        Returns:
+            bool: True if the meal was enabled successfully, False otherwise.
+        """
+        return await self.set_meal_enabled(home, meal_id, True)
+
+    async def disable_meal(self, home: Home, meal_id: str) -> bool:
+        """
+        Disable a specific meal.
+
+        Args:
+            home (Home): The home where the meal is located.
+            meal_id (str): The ID of the meal to disable.
+
+        Returns:
+            bool: True if the meal was disabled successfully, False otherwise.
+        """
+        return await self.set_meal_enabled(home, meal_id, False)
+
+    async def delete_meal(self, home: Home, meal_id: str) -> bool:
+        """
+        Delete a specific meal from the selected home.
+
+        Args:
+            home (Home): The home from which the meal will be deleted.
+            meal_id (str): The ID of the meal to delete.
+
+        Returns:
+            bool: True if the meal was deleted successfully, False otherwise.
+
+        Raises:
+            aiohttp.ClientResponseError: If the HTTP request fails.
+            Exception: For any unexpected errors.
+        """
+        await self._ensure_token_valid()
+        url = f"{self.config.base_url}/api/homes/{home.id}/meals/{meal_id}"
+
+        session = await self._get_client()
+        try:
+            async with session.delete(url, headers=self.headers) as response:
+                if response.status == 204:
+                    _LOGGER.info(
+                        "Meal %s deleted successfully from home %s.", meal_id, home.id
+                    )
+                    return True
+                text = await response.text()
+                _LOGGER.error(
+                    "Failed to delete meal %s from home %s: %s %s",
+                    meal_id,
+                    home.id,
+                    response.status,
+                    text,
+                )
+                response.raise_for_status()
+        except aiohttp.ClientResponseError as e:
+            _LOGGER.error(
+                "HTTP error while trying to delete meal %s from home %s: %s %s",
+                meal_id,
+                home.id,
+                e.status,
+                e.message,
+            )
+            raise
+        except Exception as e:
+            _LOGGER.error("Unexpected error in delete_meal: %s", e)
             raise
 
     async def get_devices(self, home: Home) -> list[Device]:
@@ -394,6 +605,24 @@ class PetsSeriesClient:
                     device_name=event.get("deviceName"),
                     product_ctn=event.get("productCtn"),
                     device_external_id=event.get("deviceExternalId"),
+                )
+            case "meal_enabled":
+                return MealEnabledEvent(
+                    id=event.get("id"),
+                    type=event_type,
+                    source=event.get("source"),
+                    time=event.get("time"),
+                    url=event.get("url"),
+                    cluster_id=event.get("clusterId"),
+                    metadata=event.get("metadata"),
+                    meal_amount=event.get("mealAmount"),
+                    meal_url=event.get("mealUrl"),
+                    device_external_id=event.get("deviceExternalId"),
+                    product_ctn=event.get("productCtn"),
+                    meal_time=event.get("mealTime"),
+                    device_id=event.get("deviceId"),
+                    device_name=event.get("deviceName"),
+                    meal_repeat_days=event.get("mealRepeatDays"),
                 )
             case _:
                 _LOGGER.warning("Unknown event type: %s", event_type)
