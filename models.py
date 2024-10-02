@@ -364,7 +364,7 @@ class MealEnabledEvent(Event):
 
 
 @dataclass
-class FilterReplacementDue(Event):
+class FilterReplacementDueEvent(Event):
     """
     Represents a filter replacement due event in the PetsSeries system.
 
@@ -417,7 +417,8 @@ class FoodOutletStuckEvent(Event):
         return f"{base_repr} device_id={self.device_id} device_name={self.device_name}"
 
 
-class DeviceOnline(Event):
+@dataclass
+class DeviceOnlineEvent(Event):
     """
     Represents a device online event in the PetsSeries system.
 
@@ -443,7 +444,8 @@ class DeviceOnline(Event):
         return f"{base_repr} device_id={self.device_id} device_name={self.device_name}"
 
 
-class DeviceOffline(Event):
+@dataclass
+class DeviceOfflineEvent(Event):
     """
     Represents a device offline event in the PetsSeries system.
 
