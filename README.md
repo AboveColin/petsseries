@@ -153,6 +153,26 @@ except Exception as e:
     print(f"An error occurred while creating the meal: {e}")
 ```
 
+#### Update Meal
+```python
+# Fetch homes
+homes = await client.get_homes()
+home = homes[0]  # Select the first home for example
+
+# Fetch meals
+meals = await client.get_meals(home)
+meal_to_update = meals[0]  # Select the first meal for example
+
+# Modify the meal details
+meal_to_update.name = "Updated Meal Name"
+meal_to_update.portion_amount = 3
+meal_to_update.feed_time = time(13, 30)  # Update to 1:30 PM
+
+# Update the meal
+updated_meal = await client.update_meal(home, meal_to_update)
+print(f"Meal updated: {updated_meal}")
+```
+
 ### Managing Devices
 You can manage device settings such as powering devices on/off and toggling motion notifications.
 
