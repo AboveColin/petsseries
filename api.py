@@ -225,7 +225,7 @@ class PetsSeriesClient:
         except Exception as e:
             _LOGGER.error("Unexpected error in get_meals: %s", e)
             raise
-    
+
     async def update_meal(self, home: Home, meal: Meal) -> Meal:
         """
         Update an existing meal for the specified home.
