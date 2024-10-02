@@ -163,6 +163,7 @@ class EventType(Enum):
     MEAL_DISPENSED = "meal_dispensed"
     MEAL_UPCOMING = "meal_upcoming"
     FOOD_LEVEL_LOW = "food_level_low"
+    MEAL_ENABLED = "meal_enabled"
 
 
 @dataclass
@@ -314,3 +315,45 @@ class FoodLevelLowEvent(Event):
         """Return a string representation of the food level low event."""
         base_repr = super().__repr__()
         return f"{base_repr} device_id={self.device_id} device_name={self.device_name}"
+
+
+@dataclass
+class MealEnabledEvent(Event):
+    # pylint: disable=too-many-instance-attributes
+    """
+    Represents a meal enabled event in the PetsSeries system.
+
+    Attributes:
+        cluster_id (Optional[str]): Cluster identifier.
+        metadata (Optional[dict]): Additional metadata.
+        meal_amount (Optional[float]): Amount of the meal.
+        meal_url (Optional[str]): URL to the meal.
+        device_external_id (Optional[str]): External identifier of the device.
+        product_ctn (Optional[str]): Product CTN of the device.
+        meal_time (Optional[str]): Time the meal is enabled.
+        device_id (Optional[str]): Device identifier.
+        device_name (Optional[str]): Device name.
+        meal_repeat_days (Optional[List[int]]): Days the meal repeats.
+    """
+
+    cluster_id: Optional[str]
+    metadata: Optional[dict]
+    meal_amount: Optional[float]
+    meal_url: Optional[str]
+    device_external_id: Optional[str]
+    product_ctn: Optional[str]
+    meal_time: Optional[str]
+    device_id: Optional[str]
+    device_name: Optional[str]
+    meal_repeat_days: Optional[List[int]]
+
+    def __repr__(self) -> str:
+        """Return a string representation of the meal enabled event."""
+        base_repr = super().__repr__()
+        return (
+            f"{base_repr} "
+            f"meal_amount={self.meal_amount} "
+            f"meal_time={self.meal_time} "
+            f"device_id={self.device_id} "
+            f"device_name={self.device_name}"
+        )
