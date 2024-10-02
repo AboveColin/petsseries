@@ -1,4 +1,4 @@
-ee43wr# Unofficial PetsSeries API Client
+# Unofficial PetsSeries API Client
 
 _Disclaimer: This is an unofficial Python client for the PetsSeries API. It is not affiliated with, endorsed by, or in any way connected to the official PetsSeries, Versuni or Philips companies._
 
