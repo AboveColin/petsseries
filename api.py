@@ -227,7 +227,7 @@ class PetsSeriesClient:
             _LOGGER.error("Unexpected error in get_meals: %s", e)
             raise
 
-    async def create_meal(  # pylint: disable=too-many-arguments
+    async def create_meal(
         self,
         home: Home,
         device_id: str,
@@ -236,6 +236,7 @@ class PetsSeriesClient:
         portion_amount: int = 1,
         repeat_days: list[int] = None,
     ) -> Meal:
+        # pylint: disable=too-many-arguments
         """
         Create a new meal for the specified home and device.
 
@@ -341,16 +342,15 @@ class PetsSeriesClient:
                         "enabled" if enabled else "disabled",
                     )
                     return True
-                else:
-                    text = await response.text()
-                    _LOGGER.error(
-                        "Failed to %s meal %s: %s %s",
-                        "enable" if enabled else "disable",
-                        meal_id,
-                        response.status,
-                        text,
-                    )
-                    response.raise_for_status()
+                text = await response.text()
+                _LOGGER.error(
+                    "Failed to %s meal %s: %s %s",
+                    "enable" if enabled else "disable",
+                    meal_id,
+                    response.status,
+                    text,
+                )
+                response.raise_for_status()
         except aiohttp.ClientResponseError as e:
             _LOGGER.error(
                 "HTTP error while trying to %s meal %s: %s %s",
