@@ -226,7 +226,8 @@ class PetsSeriesClient:
         except Exception as e:
             _LOGGER.error("Unexpected error in get_meals: %s", e)
             raise
-
+    
+    # pylint: disable=too-many-arguments
     async def create_meal(
         self,
         home: Home,
