@@ -1,5 +1,3 @@
-# api.py
-
 """
 API client for interacting with the PetsSeries backend services.
 
@@ -703,6 +701,9 @@ class PetsSeriesClient:
             return False
 
     def get_anti_flicker_level(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the anti-flicker level status of the Tuya device.
+        """
         if self.tuya_client:
             try:
                 return self.tuya_client.get_value("anti_flicker")
@@ -744,6 +745,9 @@ class PetsSeriesClient:
             return False
 
     def get_device_volume(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the device volume status of the Tuya device.
+        """
         if self.tuya_client:
             try:
                 return self.tuya_client.get_value("device_volume")
@@ -785,6 +789,9 @@ class PetsSeriesClient:
             return False
 
     def get_food_weight(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the food weight status of the Tuya device.
+        """
         if self.tuya_client:
             try:
                 return self.tuya_client.get_value("food_weight")
