@@ -16,6 +16,7 @@ import aiohttp
 import jwt
 
 from .session import create_ssl_context
+from .config import Config
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,7 +25,8 @@ _LOGGER = logging.getLogger(__name__)
 class AuthError(Exception):
     """Custom exception for authentication errors."""
 
-    _LOGGER.error("An error occurred: %s", Exception)
+    def __init__(self, message: str):
+        super().__init__(message)
 
 
 class AuthManager:
@@ -93,6 +95,7 @@ class AuthManager:
         except FileNotFoundError as exc:
             _LOGGER.warning("Token file not found at: %s", self.token_file_path)
             if self.access_token is None or self.refresh_token is None:
+                _LOGGER.error("Token file not found and no tokens provided.")
                 raise AuthError("Token file not found and no tokens provided.") from exc
             _LOGGER.warning("Generating tokens from arguments.")
             await self.save_tokens()
@@ -114,6 +117,7 @@ class AuthManager:
             AuthError: If decoding fails or client_id is missing.
         """
         if self.access_token is None:
+            _LOGGER.error("Access token is None")
             raise AuthError("Access token is None")
         try:
             # Decode without verifying the signature
@@ -124,11 +128,14 @@ class AuthManager:
             )
             client_id = token.get("client_id")
             if not client_id:
+                _LOGGER.error("client_id not found in token")
                 raise AuthError("client_id not found in token")
             return client_id
         except jwt.DecodeError as exc:
+            _LOGGER.error("Error decoding JWT: %s", exc)
             raise AuthError(f"Error decoding JWT: {exc}") from exc
         except Exception as exc:
+            _LOGGER.error("Unexpected error: %s", exc)
             raise AuthError(f"Unexpected error: {exc}") from exc
 
     async def get_expiration(self) -> int:
@@ -142,6 +149,7 @@ class AuthManager:
             AuthError: If decoding fails or expiration time is missing.
         """
         if self.access_token is None:
+            _LOGGER.error("Access token is None")
             raise AuthError("Access token is None")
         try:
             token = jwt.decode(
@@ -151,11 +159,14 @@ class AuthManager:
             )
             exp = token.get("exp")
             if exp is None:
+                _LOGGER.error("Expiration time (exp) not found in token")
                 raise AuthError("Expiration time (exp) not found in token")
             return exp
         except jwt.DecodeError as exc:
+            _LOGGER.error("Error decoding JWT: %s", exc)
             raise AuthError(f"Error decoding JWT: {exc}") from exc
         except Exception as exc:
+            _LOGGER.error("Unexpected error: %s", exc)
             raise AuthError(f"Unexpected error: {exc}") from exc
 
     async def is_token_expired(self) -> bool:
@@ -181,7 +192,6 @@ class AuthManager:
             AuthError: If the token refresh fails.
         """
         _LOGGER.info("Access token expired, refreshing...")
-        url = "https://cdc.accounts.home.id/oidc/op/v1.0/4_JGZWlP8eQHpEqkvQElolbA/token"
         client_id = await self.get_client_id()
         data = {
             "grant_type": "refresh_token",
@@ -201,7 +211,9 @@ class AuthManager:
                 "Refreshing access token with data: %s and headers: %s", data, headers
             )
             session = await self._get_session()
-            async with session.post(url, headers=headers, data=data) as response:
+            async with session.post(
+                Config.token_url, headers=headers, data=data
+            ) as response:
                 _LOGGER.debug("Token refresh response status: %s", response.status)
                 if response.status == 200:
                     response_json = await response.json()
