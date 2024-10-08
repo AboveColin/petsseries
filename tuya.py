@@ -197,9 +197,8 @@ class TuyaClient:
             if value is not None:
                 _LOGGER.info("Got value '%s' for DP code '%s'.", value, dp_code)
                 return value
-            else:
-                _LOGGER.error("Value not found for DP code '%s'.", dp_code)
-                return None
+            _LOGGER.error("Value not found for DP code '%s'.", dp_code)
+            return None
         except Exception as e:
             _LOGGER.error("Failed to get value for DP code '%s': %s", dp_code, e)
             raise TuyaError(f"Failed to get value for DP code '{dp_code}': {e}") from e
