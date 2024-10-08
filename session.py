@@ -4,8 +4,11 @@ Helper function to create an SSL context using certifi's CA bundle in a separate
 
 import asyncio
 import ssl
+import logging
 
 import certifi
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def create_ssl_context() -> ssl.SSLContext:
