@@ -1,3 +1,5 @@
+# api.py
+
 """
 API client for interacting with the PetsSeries backend services.
 
@@ -6,7 +8,7 @@ data retrieval, and device management for the PetsSeries application.
 """
 
 import logging
-import urllib.parse
+from typing import Any, Dict, Optional
 
 import aiohttp
 
@@ -14,23 +16,23 @@ from .auth import AuthManager
 from .models import (
     User,
     Home,
-    Meal,
     Device,
     Consumer,
     ModeDevice,
-    Event,
-    MotionEvent,
-    MealDispensedEvent,
-    MealUpcomingEvent,
-    FoodLevelLowEvent,
-    MealEnabledEvent,
-    FilterReplacementDueEvent,
-    FoodOutletStuckEvent,
-    DeviceOfflineEvent,
-    DeviceOnlineEvent,
 )
 from .config import Config
 from .session import create_ssl_context
+
+# Import MealsManager
+from .meals import MealsManager
+from .events import EventsManager
+
+# Optional import for Tuya
+try:
+    from .tuya import TuyaClient, TuyaError
+except ImportError:
+    TuyaClient = None
+    TuyaError = Exception
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,15 +46,45 @@ class PetsSeriesClient:
     and manage device settings.
     """
 
-    def __init__(self, token_file="tokens.json", access_token=None, refresh_token=None):
+    def __init__(
+        self,
+        token_file="tokens.json",
+        access_token=None,
+        refresh_token=None,
+        tuya_credentials: Optional[Dict[str, str]] = None,
+    ):
         self.auth = AuthManager(token_file, access_token, refresh_token)
         self.session = None
         self.headers = {}
         self.headers_token = {}
         self.timeout = aiohttp.ClientTimeout(total=10.0)
         self.config = Config()
+        self.tuya_client: Optional[TuyaClient] = None  # type: ignore
 
-    async def _get_client(self) -> aiohttp.ClientSession:
+        self.meals = MealsManager(self)
+        self.events = EventsManager(self)
+
+        if tuya_credentials:
+            if TuyaClient is None:
+                _LOGGER.error(
+                    "TuyaClient not available. Install 'tinytuya' to enable Tuya support."
+                )
+                raise ImportError(
+                    "TuyaClient not available. Install 'tinytuya' to enable Tuya support."
+                )
+            try:
+                self.tuya_client = TuyaClient(
+                    client_id=tuya_credentials["client_id"],
+                    ip=tuya_credentials["ip"],
+                    local_key=tuya_credentials["local_key"],
+                    version=tuya_credentials.get("version", 3.4),
+                )
+                _LOGGER.info("TuyaClient initialized successfully.")
+            except TuyaError as e:
+                _LOGGER.error("Failed to initialize TuyaClient: %s", e)
+                raise
+
+    async def get_client(self) -> aiohttp.ClientSession:
         # pylint: disable=duplicate-code
         """
         Get an aiohttp.ClientSession with certifi's CA bundle.
@@ -109,7 +141,7 @@ class PetsSeriesClient:
             _LOGGER.debug("aiohttp.ClientSession closed.")
         await self.auth.close()
 
-    async def _ensure_token_valid(self) -> None:
+    async def ensure_token_valid(self) -> None:
         """
         Ensure the access token is valid, refreshing it if necessary.
         """
@@ -122,8 +154,8 @@ class PetsSeriesClient:
         """
         Get user information from the UserInfo endpoint.
         """
-        await self._ensure_token_valid()
-        session = await self._get_client()
+        await self.ensure_token_valid()
+        session = await self.get_client()
         try:
             async with session.get(
                 self.config.user_info_url, headers=self.headers
@@ -149,8 +181,8 @@ class PetsSeriesClient:
         """
         Get Consumer information from the Consumer endpoint.
         """
-        await self._ensure_token_valid()
-        session = await self._get_client()
+        await self.ensure_token_valid()
+        session = await self.get_client()
         try:
             async with session.get(
                 self.config.consumer_url, headers=self.headers
@@ -171,8 +203,8 @@ class PetsSeriesClient:
         """
         Get available homes for the user.
         """
-        await self._ensure_token_valid()
-        session = await self._get_client()
+        await self.ensure_token_valid()
+        session = await self.get_client()
         try:
             async with session.get(
                 self.config.homes_url, headers=self.headers
@@ -198,318 +230,16 @@ class PetsSeriesClient:
             _LOGGER.error("Unexpected error in get_homes: %s", e)
             raise
 
-    async def get_meals(self, home: Home) -> list[Meal]:
-        """
-        Get meals for the selected home.
-        """
-        await self._ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/meals"
-        session = await self._get_client()
-        try:
-            async with session.get(url, headers=self.headers) as response:
-                response.raise_for_status()
-                meals_data = await response.json()
-                meals = [
-                    Meal(
-                        id=meal["id"],
-                        name=meal["name"],
-                        portion_amount=meal["portionAmount"],
-                        feed_time=meal["feedTime"],
-                        repeat_days=meal["repeatDays"],
-                        device_id=meal["deviceId"],
-                        enabled=meal["enabled"],
-                        url=meal["url"],
-                    )
-                    for meal in meals_data.get("item", [])
-                ]
-                return meals
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error("Failed to get meals: %s %s", e.status, e.message)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in get_meals: %s", e)
-            raise
-
-    async def update_meal(self, home: Home, meal: Meal) -> Meal:
-        """
-        Update an existing meal for the specified home.
-
-        Args:
-            home (Home): The home where the meal is located.
-            meal (Meal): The Meal object containing updated information. The `id` field must be set.
-
-        Returns:
-            Meal: The updated Meal object.
-
-        Raises:
-            ValueError: If the meal ID is not provided.
-            aiohttp.ClientResponseError: If the HTTP request fails.
-            Exception: For any unexpected errors.
-        """
-        await self._ensure_token_valid()
-
-        if not meal.id:
-            raise ValueError("Meal ID must be provided for updating a meal.")
-
-        url = f"{self.config.base_url}/api/homes/{home.id}/meals/{meal.id}"
-
-        # Prepare the payload with updated fields
-        payload = {
-            "name": meal.name,
-            "portionAmount": meal.portion_amount,
-            "feedTime": meal.feed_time.isoformat(),
-            "repeatDays": meal.repeat_days or [1, 2, 3, 4, 5, 6, 7],
-        }
-
-        session = await self._get_client()
-        try:
-            async with session.patch(
-                url, headers=self.headers, json=payload
-            ) as response:
-                if response.status == 200:
-                    updated_data = await response.json()
-                    _LOGGER.info("Meal %s updated successfully.", meal.id)
-                    return Meal(
-                        id=updated_data["id"],
-                        name=updated_data["name"],
-                        portion_amount=updated_data["portionAmount"],
-                        feed_time=updated_data["feedTime"],
-                        repeat_days=updated_data.get(
-                            "repeatDays", [1, 2, 3, 4, 5, 6, 7]
-                        ),
-                        device_id=updated_data["deviceId"],
-                        enabled=updated_data.get("enabled", True),
-                        url=updated_data["url"],
-                    )
-                text = await response.text()
-                _LOGGER.error(
-                    "Failed to update meal %s: %s %s", meal.id, response.status, text
-                )
-                response.raise_for_status()
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error(
-                "Failed to update meal %s: %s %s", meal.id, e.status, e.message
-            )
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in update_meal: %s", e)
-            raise
-
-    async def create_meal(
-        self,
-        home: Home,
-        meal: Meal,
-    ) -> Meal:
-        """
-        Create a new meal for the specified home and device.
-
-        Args:
-            home (Home): The home where the meal will be created.
-            meal should contain the following attributes:
-                - name: The name of the meal.
-                - portion_amount: The amount of food per portion.
-                - feed_time: The time the meal should be dispensed.
-                - device_id: The ID of the device dispensing the meal.
-                - repeat_days: Days of the week to repeat the meal (1=Monday,...,7=Sunday).
-        Returns:
-            Meal: The created Meal object.
-
-        Raises:
-            aiohttp.ClientResponseError: If the HTTP request fails.
-            Exception: For any unexpected errors.
-        """
-        await self._ensure_token_valid()
-        if meal.repeat_days is None:
-            repeat_days = [1, 2, 3, 4, 5, 6, 7]
-        else:
-            repeat_days = meal.repeat_days
-
-        payload = {
-            "deviceId": meal.device_id,
-            "feedTime": meal.feed_time.isoformat(),
-            "name": meal.name,
-            "portionAmount": meal.portion_amount,
-            "repeatDays": repeat_days,
-        }
-
-        session = await self._get_client()
-        try:
-            async with session.post(
-                f"{self.config.base_url}/api/homes/{home.id}/meals",
-                headers=self.headers,
-                json=payload,
-            ) as response:
-
-                if response.status == 201:
-                    location = response.headers.get("Location")
-                    if not location:
-                        _LOGGER.error("Location header missing in response.")
-
-                    # Extract the meal ID from the Location URL
-                    parsed_url = urllib.parse.urlparse(location)
-                    meal_id = parsed_url.path.split("/")[-1]
-
-                    _LOGGER.info("Meal created successfully with ID: %s", meal_id)
-
-                    return Meal(
-                        id=meal_id,
-                        name=meal.name,
-                        portion_amount=meal.portion_amount,
-                        feed_time=meal.feed_time.isoformat(),
-                        repeat_days=repeat_days,
-                        device_id=meal.device_id,
-                        enabled=True,
-                        url=location,
-                    )
-                text = await response.text()
-                _LOGGER.error("Failed to create meal: %s %s", response.status, text)
-                response.raise_for_status()
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error("Failed to create meal: %s %s", e.status, e.message)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in create_meal: %s", e)
-            raise
-
-    async def set_meal_enabled(self, home: Home, meal_id: str, enabled: bool) -> bool:
-        """
-        Enable or disable a specific meal.
-
-        Args:
-            home (Home): The home where the meal is located.
-            meal_id (str): The ID of the meal to update.
-            enabled (bool): The desired enabled state of the meal.
-
-        Returns:
-            bool: True if the update was successful, False otherwise.
-
-        Raises:
-            aiohttp.ClientResponseError: If the HTTP request fails.
-            Exception: For any unexpected errors.
-        """
-        await self._ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/meals/{meal_id}"
-
-        payload = {"enabled": enabled}
-
-        session = await self._get_client()
-        try:
-            async with session.patch(
-                url, headers=self.headers, json=payload
-            ) as response:
-                if response.status == 204:
-                    _LOGGER.info(
-                        "Meal %s has been %s successfully.",
-                        meal_id,
-                        "enabled" if enabled else "disabled",
-                    )
-                    return True
-                text = await response.text()
-                _LOGGER.error(
-                    "Failed to %s meal %s: %s %s",
-                    "enable" if enabled else "disable",
-                    meal_id,
-                    response.status,
-                    text,
-                )
-                response.raise_for_status()
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error(
-                "HTTP error while trying to %s meal %s: %s %s",
-                "enable" if enabled else "disable",
-                meal_id,
-                e.status,
-                e.message,
-            )
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in set_meal_enabled: %s", e)
-            raise
-
-    async def enable_meal(self, home: Home, meal_id: str) -> bool:
-        """
-        Enable a specific meal.
-
-        Args:
-            home (Home): The home where the meal is located.
-            meal_id (str): The ID of the meal to enable.
-
-        Returns:
-            bool: True if the meal was enabled successfully, False otherwise.
-        """
-        return await self.set_meal_enabled(home, meal_id, True)
-
-    async def disable_meal(self, home: Home, meal_id: str) -> bool:
-        """
-        Disable a specific meal.
-
-        Args:
-            home (Home): The home where the meal is located.
-            meal_id (str): The ID of the meal to disable.
-
-        Returns:
-            bool: True if the meal was disabled successfully, False otherwise.
-        """
-        return await self.set_meal_enabled(home, meal_id, False)
-
-    async def delete_meal(self, home: Home, meal_id: str) -> bool:
-        """
-        Delete a specific meal from the selected home.
-
-        Args:
-            home (Home): The home from which the meal will be deleted.
-            meal_id (str): The ID of the meal to delete.
-
-        Returns:
-            bool: True if the meal was deleted successfully, False otherwise.
-
-        Raises:
-            aiohttp.ClientResponseError: If the HTTP request fails.
-            Exception: For any unexpected errors.
-        """
-        await self._ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/meals/{meal_id}"
-
-        session = await self._get_client()
-        try:
-            async with session.delete(url, headers=self.headers) as response:
-                if response.status == 204:
-                    _LOGGER.info(
-                        "Meal %s deleted successfully from home %s.", meal_id, home.id
-                    )
-                    return True
-                text = await response.text()
-                _LOGGER.error(
-                    "Failed to delete meal %s from home %s: %s %s",
-                    meal_id,
-                    home.id,
-                    response.status,
-                    text,
-                )
-                response.raise_for_status()
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error(
-                "HTTP error while trying to delete meal %s from home %s: %s %s",
-                meal_id,
-                home.id,
-                e.status,
-                e.message,
-            )
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in delete_meal: %s", e)
-            raise
-
     async def get_devices(self, home: Home) -> list[Device]:
         """
         Get devices for the selected home.
         """
-        await self._ensure_token_valid()
+        await self.ensure_token_valid()
         url = (
             f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
             f"api/homes/{home.id}/devices"
         )
-        session = await self._get_client()
+        session = await self.get_client()
         try:
             async with session.get(url, headers=self.headers) as response:
                 response.raise_for_status()
@@ -539,12 +269,12 @@ class PetsSeriesClient:
         """
         Get mode devices for the selected home.
         """
-        await self._ensure_token_valid()
+        await self.ensure_token_valid()
         url = (
             f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
             f"api/homes/{home.id}/modes/home/devices"
         )
-        session = await self._get_client()
+        session = await self.get_client()
         try:
             async with session.get(url, headers=self.headers) as response:
                 response.raise_for_status()
@@ -561,230 +291,13 @@ class PetsSeriesClient:
             _LOGGER.error("Unexpected error in get_mode_devices: %s", e)
             raise
 
-    async def get_events(
-        self, home: Home, from_date, to_date, types: str = "none"
-    ) -> list[Event]:
-        """
-        Get events for the selected home within a date range.
-        """
-        clustered = "true"
-        await self._ensure_token_valid()
-        if types not in Event.get_event_types() and types != "none":
-            raise ValueError(f"Invalid event type '{types}'")
-        types_param = f"&types={types}" if types != "none" else ""
-
-        from_date_encoded = urllib.parse.quote(from_date.isoformat())
-        to_date_encoded = urllib.parse.quote(to_date.isoformat())
-
-        url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/events"
-            f"?from={from_date_encoded}&to={to_date_encoded}&clustered={clustered}"
-            f"{types_param}"
-        )
-        session = await self._get_client()
-        try:
-            async with session.get(url, headers=self.headers) as response:
-                response.raise_for_status()
-                events_data = await response.json()
-                events = [
-                    self.parse_event(event) for event in events_data.get("item", [])
-                ]
-                return events
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error("Failed to get events: %s %s", e.status, e.message)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in get_events: %s", e)
-            raise
-
-    # pylint: disable=too-many-return-statements
-    def parse_event(self, event: dict) -> Event:
-        """
-        Parse an event dictionary into an Event object.
-        """
-        event_type = event.get("type")
-        match event_type:
-            case "motion_detected":
-                return MotionEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
-                    cluster_id=event.get("clusterId"),
-                    metadata=event.get("metadata"),
-                    thumbnail_key=event.get("thumbnailKey"),
-                    device_id=event.get("deviceId"),
-                    device_name=event.get("deviceName"),
-                    thumbnail_url=event.get("thumbnailUrl"),
-                    product_ctn=event.get("productCtn"),
-                    device_external_id=event.get("deviceExternalId"),
-                )
-            case "meal_dispensed":
-                return MealDispensedEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
-                    cluster_id=event.get("clusterId"),
-                    metadata=event.get("metadata"),
-                    meal_name=event.get("mealName"),
-                    device_id=event.get("deviceId"),
-                    meal_url=event.get("mealUrl"),
-                    meal_amount=event.get("mealAmount"),
-                    device_name=event.get("deviceName"),
-                    device_external_id=event.get("deviceExternalId"),
-                    product_ctn=event.get("productCtn"),
-                )
-            case "meal_upcoming":
-                return MealUpcomingEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
-                    cluster_id=event.get("clusterId"),
-                    metadata=event.get("metadata"),
-                    meal_name=event.get("mealName"),
-                    device_id=event.get("deviceId"),
-                    meal_url=event.get("mealUrl"),
-                    meal_amount=event.get("mealAmount"),
-                    device_name=event.get("deviceName"),
-                    device_external_id=event.get("deviceExternalId"),
-                    product_ctn=event.get("productCtn"),
-                )
-            case "food_level_low":
-                return FoodLevelLowEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
-                    cluster_id=event.get("clusterId"),
-                    metadata=event.get("metadata"),
-                    device_id=event.get("deviceId"),
-                    device_name=event.get("deviceName"),
-                    product_ctn=event.get("productCtn"),
-                    device_external_id=event.get("deviceExternalId"),
-                )
-            case "meal_enabled":
-                return MealEnabledEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
-                    cluster_id=event.get("clusterId"),
-                    metadata=event.get("metadata"),
-                    meal_amount=event.get("mealAmount"),
-                    meal_url=event.get("mealUrl"),
-                    device_external_id=event.get("deviceExternalId"),
-                    product_ctn=event.get("productCtn"),
-                    meal_time=event.get("mealTime"),
-                    device_id=event.get("deviceId"),
-                    device_name=event.get("deviceName"),
-                    meal_repeat_days=event.get("mealRepeatDays"),
-                )
-            case "filter_replacement_due":
-                return FilterReplacementDueEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
-                    cluster_id=event.get("clusterId"),
-                    metadata=event.get("metadata"),
-                    device_id=event.get("deviceId"),
-                    device_name=event.get("deviceName"),
-                    product_ctn=event.get("productCtn"),
-                    device_external_id=event.get("deviceExternalId"),
-                )
-            case "food_outlet_stuck":
-                return FoodOutletStuckEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
-                    cluster_id=event.get("clusterId"),
-                    metadata=event.get("metadata"),
-                    device_id=event.get("deviceId"),
-                    device_name=event.get("deviceName"),
-                    product_ctn=event.get("productCtn"),
-                    device_external_id=event.get("deviceExternalId"),
-                )
-            case "device_offline":
-                return DeviceOfflineEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
-                    cluster_id=event.get("clusterId"),
-                    metadata=event.get("metadata"),
-                    device_id=event.get("deviceId"),
-                    device_name=event.get("deviceName"),
-                    product_ctn=event.get("productCtn"),
-                    device_external_id=event.get("deviceExternalId"),
-                )
-            case "device_online":
-                return DeviceOnlineEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
-                    cluster_id=event.get("clusterId"),
-                    metadata=event.get("metadata"),
-                    device_id=event.get("deviceId"),
-                    device_name=event.get("deviceName"),
-                    product_ctn=event.get("productCtn"),
-                    device_external_id=event.get("deviceExternalId"),
-                )
-            case _:
-                _LOGGER.warning("Unknown event type: %s", event_type)
-                # Generic event
-                return Event(
-                    id=event["id"],
-                    type=event_type,
-                    source=event["source"],
-                    time=event["time"],
-                    url=event["url"],
-                )
-
-    async def get_event(self, home: Home, event_id: str) -> Event:
-        """
-        Get a specific event by ID.
-        """
-        await self._ensure_token_valid()
-        url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/events/{event_id}"
-        )
-        session = await self._get_client()
-        try:
-            async with session.get(url, headers=self.headers) as response:
-                response.raise_for_status()
-                event_data = await response.json()
-                return self.parse_event(event_data)
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error(
-                "Failed to get event %s: %s %s", event_id, e.status, e.message
-            )
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in get_event: %s", e)
-            raise
-
     async def update_device_settings(
         self, home: Home, device_id: str, settings: dict
     ) -> bool:
         """
         Update the settings for a device.
         """
-        await self._ensure_token_valid()
+        await self.ensure_token_valid()
         url = (
             f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
             f"api/homes/{home.id}/modes/home/devices/{device_id}"
@@ -796,7 +309,7 @@ class PetsSeriesClient:
         }
 
         payload = {"settings": settings}
-        session = await self._get_client()
+        session = await self.get_client()
         try:
             async with session.patch(url, headers=headers, json=payload) as response:
                 if response.status == 204:
@@ -904,8 +417,380 @@ class PetsSeriesClient:
         )
 
     async def __aenter__(self):
-        await self._get_client()
+        await self.get_client()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
+
+    # Tuya methods
+    def get_tuya_status(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the status of the Tuya device.
+
+        Returns:
+            Optional[Dict[str, Any]]:
+                The Tuya device status if TuyaClient is initialized, else None.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.get_status()
+            except TuyaError as e:
+                _LOGGER.error("Failed to get Tuya device status: %s", e)
+                return None
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return None
+
+    def set_tuya_value(self, dp_code: str, value: Any) -> bool:
+        """
+        Set a value on the Tuya device.
+
+        Args:
+            dp_code (str): The DP code to set.
+            value (Any): The value to set.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.set_value(dp_code, value)
+            except TuyaError as e:
+                _LOGGER.error("Failed to set Tuya device value: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def toggle_tuya_switch(self, dp_code: str) -> bool:
+        """
+        Toggle a boolean switch on the Tuya device.
+
+        Args:
+            dp_code (str): The DP code to toggle.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.toggle_switch(dp_code)
+            except TuyaError as e:
+                _LOGGER.error("Failed to toggle Tuya device switch: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def set_flip(self) -> bool:
+        """
+        Flip the basic switch on the Tuya device.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.toggle_switch("flip")
+            except TuyaError as e:
+                _LOGGER.error("Failed to flip the Tuya device switch: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def get_flip(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the status of the Tuya device.
+
+        Returns:
+            Optional[Dict[str, Any]]: The Tuya device status if TuyaClient is initialized, else None.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.get_value("flip")
+            except TuyaError as e:
+                _LOGGER.error("Failed to get Tuya device status: %s", e)
+                return None
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return None
+
+    def set_osd(self) -> bool:
+        """
+        Flip the OSD switch on the Tuya device.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.toggle_switch("osd")
+            except TuyaError as e:
+                _LOGGER.error("Failed to flip the Tuya device switch: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def get_osd(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the OSD status of the Tuya device.
+
+        Returns:
+            Optional[Dict[str, Any]]: The Tuya device status if TuyaClient is initialized, else None.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.get_value("osd")
+            except TuyaError as e:
+                _LOGGER.error("Failed to get Tuya device status: %s", e)
+                return None
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return None
+
+    def set_private(self) -> bool:
+        """
+        Flip the private switch on the Tuya device.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.toggle_switch("private")
+            except TuyaError as e:
+                _LOGGER.error("Failed to flip the Tuya device switch: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def get_private(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the private status of the Tuya device.
+
+        Returns:
+            Optional[Dict[str, Any]]: The Tuya device status if TuyaClient is initialized, else None.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.get_value("private")
+            except TuyaError as e:
+                _LOGGER.error("Failed to get Tuya device status: %s", e)
+                return None
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return None
+
+    def set_motion_sensitivity(self, value: str) -> bool:
+        """
+        Set the motion sensitivity on the Tuya device.
+        [0, 1, 2]
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.set_value("motion_sensitivity", value)
+            except TuyaError as e:
+                _LOGGER.error("Failed to set the Tuya device value: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def get_motion_sensitivity(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the motion sensitivity status of the Tuya device.
+
+        Returns:
+            Optional[Dict[str, Any]]:
+                The Tuya device status if TuyaClient is initialized, else None.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.get_value("motion_sensitivity")
+            except TuyaError as e:
+                _LOGGER.error("Failed to get Tuya device status: %s", e)
+                return None
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return None
+
+    def set_nightvision_level(self, value: str) -> bool:
+        """
+        Set the night vision level on the Tuya device.
+        [0, 1, 2]
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.set_value("nightvision", value)
+            except TuyaError as e:
+                _LOGGER.error("Failed to set the Tuya device value: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def get_nightvision_level(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the night vision level status of the Tuya device.
+
+        Returns:
+            Optional[Dict[str, Any]]: The Tuya device status if TuyaClient is initialized, else None.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.get_value("nightvision")
+            except TuyaError as e:
+                _LOGGER.error("Failed to get Tuya device status: %s", e)
+                return None
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return None
+
+    def set_motion_switch(self) -> bool:
+        """
+        Flip the motion switch on the Tuya device.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.toggle_switch("motion_switch")
+            except TuyaError as e:
+                _LOGGER.error("Failed to flip the Tuya device switch: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def get_motion_switch(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the motion switch status of the Tuya device.
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.get_value("motion_switch")
+            except TuyaError as e:
+                _LOGGER.error("Failed to get Tuya device status: %s", e)
+                return None
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return None
+
+    def set_anti_flicker_level(self, value: str) -> bool:
+        """
+        Set the anti-flicker level on the Tuya device.
+        [0, 1, 2]
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.set_value("anti_flicker", value)
+            except TuyaError as e:
+                _LOGGER.error("Failed to set the Tuya device value: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def get_anti_flicker_level(self) -> Optional[Dict[str, Any]]:
+        if self.tuya_client:
+            try:
+                return self.tuya_client.get_value("anti_flicker")
+            except TuyaError as e:
+                _LOGGER.error("Failed to get Tuya device status: %s", e)
+                return None
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return None
+
+    def feed_num(self, value: int) -> bool:
+        """
+        Feed the specified number of times.
+        0 - 20
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.set_value("feed_num", value)
+            except TuyaError as e:
+                _LOGGER.error("Failed to set the Tuya device value: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def set_device_volume(self, value: int) -> bool:
+        """
+        Set the device volume on the Tuya device.
+        1 - 100
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.set_value("device_volume", value)
+            except TuyaError as e:
+                _LOGGER.error("Failed to set the Tuya device value: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def get_device_volume(self) -> Optional[Dict[str, Any]]:
+        if self.tuya_client:
+            try:
+                return self.tuya_client.get_value("device_volume")
+            except TuyaError as e:
+                _LOGGER.error("Failed to get Tuya device status: %s", e)
+                return None
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return None
+
+    def feed_abnormal(self, value: int) -> bool:
+        """
+        Set the feed abnormal value on the Tuya device.
+        0 - 255
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.set_value("feed_abnormal", value)
+            except TuyaError as e:
+                _LOGGER.error("Failed to set the Tuya device value: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def set_food_weight(self, value: int) -> bool:
+        """
+        Set the food weight on the Tuya device.
+        0 - 100
+        """
+        if self.tuya_client:
+            try:
+                return self.tuya_client.set_value("food_weight", value)
+            except TuyaError as e:
+                _LOGGER.error("Failed to set the Tuya device value: %s", e)
+                return False
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return False
+
+    def get_food_weight(self) -> Optional[Dict[str, Any]]:
+        if self.tuya_client:
+            try:
+                return self.tuya_client.get_value("food_weight")
+            except TuyaError as e:
+                _LOGGER.error("Failed to get Tuya device status: %s", e)
+                return None
+        else:
+            _LOGGER.warning("TuyaClient is not initialized.")
+            return None
