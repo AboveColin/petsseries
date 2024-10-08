@@ -3,3 +3,4 @@ aiofiles
 certifi
 PyJWT
 setuptools
+tinytuya
