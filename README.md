@@ -1,4 +1,5 @@
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/petsseries)
+![PyPI - Downloads](https://img.shields.io/pypi/dd/petsseries)
 
 # Unofficial PetsSeries API Client
 
