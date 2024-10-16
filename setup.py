@@ -10,7 +10,7 @@ setup(
     description="A Unofficial Python client for interacting with the Philips Pets Series API",
     author="AboveColin",
     author_email="colin@cdevries.dev",
-    packages=find_packages(),
+    packages=["petsseries"],
     install_requires=["aiohttp", "aiofiles", "certifi", "PyJWT", "tinytuya"],
     python_requires=">=3.11",
     url="https://github.com/abovecolin/petsseries",
