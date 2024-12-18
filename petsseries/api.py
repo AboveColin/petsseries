@@ -58,9 +58,6 @@ class PetsSeriesClient:
         self.timeout = aiohttp.ClientTimeout(total=10.0)
         self.config = Config()
         self.tuya_client: Optional[TuyaClient] = None  # type: ignore
-        self.access_token = access_token
-        self.refresh_token = refresh_token
-        
         self.meals = MealsManager(self)
         self.events = EventsManager(self)
 
@@ -104,8 +101,8 @@ class PetsSeriesClient:
         """
         Initialize the client by loading tokens and refreshing the access token if necessary.
         """
-        if self.access_token and self.refresh_token:
-            await self.auth.save_tokens(str(self.access_token), str(self.refresh_token))
+        if self.auth.access_token and self.auth.refresh_token:
+            await self.auth.save_tokens(str(self.auth.access_token), str(self.auth.refresh_token))
         await self.auth.load_tokens()
         if await self.auth.is_token_expired():
             _LOGGER.info("Access token expired, refreshing...")
