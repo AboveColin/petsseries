@@ -6,7 +6,7 @@ from setuptools import setup
 
 setup(
     name="petsseries",
-    version="0.2.3",
+    version="0.2.5",
     description="A Unofficial Python client for interacting with the Philips Pets Series API",
     author="AboveColin",
     author_email="colin@cdevries.dev",
