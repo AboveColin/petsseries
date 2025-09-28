@@ -52,7 +52,7 @@ class PetsSeriesClient:
         tuya_credentials: Optional[Dict[str, str]] = None,
     ):
         self.auth = AuthManager(token_file, access_token, refresh_token)
-        self.session = None
+        self.session: Optional[aiohttp.ClientSession] = None
         self.headers: Dict[str, str] = {}
         self.headers_token: Dict[str, str] = {}
         self.timeout = aiohttp.ClientTimeout(total=10.0)
@@ -95,6 +95,7 @@ class PetsSeriesClient:
                 timeout=self.timeout, connector=connector
             )
             _LOGGER.debug("aiohttp.ClientSession initialized with certifi CA bundle.")
+        assert self.session is not None
         return self.session
 
     async def initialize(self) -> None:
@@ -190,13 +191,18 @@ class PetsSeriesClient:
             ) as response:
                 response.raise_for_status()
                 data = await response.json()
-                # New consumer endpoint observed returns: id, identities, installations, url, identitiesUrl, installationsUrl, language
-                # countryCode may be absent; set to empty string if missing for backward compatibility
-                return Consumer(
+                # New consumer endpoint returns additional fields
+                consumer = Consumer(
                     id=str(data.get("id", "")),
                     country_code=str(data.get("countryCode", "")),
                     url=str(data.get("url", "")),
                 )
+                consumer.language = data.get("language")
+                consumer.identities = data.get("identities")
+                consumer.identities_url = data.get("identitiesUrl")
+                consumer.installations = data.get("installations")
+                consumer.installations_url = data.get("installationsUrl")
+                return consumer
         except aiohttp.ClientResponseError as e:
             _LOGGER.error("Failed to get Consumer: %s %s", e.status, e.message)
             raise
@@ -219,17 +225,26 @@ class PetsSeriesClient:
                 items = homes_data.get(
                     "item", homes_data if isinstance(homes_data, list) else []
                 )
-                homes = [
-                    Home(
-                        id=home.get("id", ""),
-                        name=home.get("name", ""),
-                        shared=bool(home.get("shared", False)),
-                        number_of_devices=int(home.get("numberOfDevices", 0)),
-                        external_id=str(home.get("externalId", "")),
-                        number_of_activities=int(home.get("numberOfActivities", 0)),
+                homes: list[Home] = []
+                for h in items:
+                    home = Home(
+                        id=str(h.get("id", "")),
+                        name=str(h.get("name", "")),
+                        shared=bool(h.get("shared", False)),
+                        number_of_devices=int(h.get("numberOfDevices", 0)),
+                        external_id=str(h.get("externalId", "")),
+                        number_of_activities=int(h.get("numberOfActivities", 0)),
                     )
-                    for home in items
-                ]
+                    home.url = str(h.get("url", home.url))
+                    home.devices_url = str(h.get("devicesUrl", home.devices_url))
+                    home.events_url = str(h.get("eventsUrl", home.events_url))
+                    home.invites_url = str(h.get("invitesUrl", home.invites_url))
+                    home.time_zone = h.get("timeZone", home.time_zone)
+                    home.active_mode = h.get("activeMode", home.active_mode)
+                    home.modes = h.get("modes", home.modes)
+                    home.members = h.get("members", home.members)
+                    home.vendor_ids = h.get("vendorIds", home.vendor_ids)
+                    homes.append(home)
                 return homes
         except aiohttp.ClientResponseError as e:
             _LOGGER.error("Failed to get homes: %s %s", e.status, e.message)
@@ -249,19 +264,20 @@ class PetsSeriesClient:
             async with session.get(url, headers=self.headers) as response:
                 response.raise_for_status()
                 devices_data = await response.json()
-                devices = [
-                    Device(
-                        id=device["id"],
-                        name=device["name"],
-                        product_ctn=device["productCtn"],
-                        product_id=device["productId"],
-                        external_id=device["externalId"],
-                        url=device["url"],
-                        settings_url=device["settingsUrl"],
-                        subscription_url=device["subscriptionUrl"],
+                devices: list[Device] = []
+                for d in devices_data.get("item", []):
+                    device = Device(
+                        id=str(d.get("id", "")),
+                        name=str(d.get("name", "")),
+                        product_ctn=d.get("productCtn"),
+                        product_id=d.get("productId"),
+                        vendor_id=d.get("vendorId"),
+                        external_id=d.get("externalId"),
+                        url=str(d.get("url", "")),
+                        settings_url=str(d.get("settingsUrl", "")),
+                        subscription_url=d.get("subscriptionUrl"),
                     )
-                    for device in devices_data.get("item", [])
-                ]
+                    devices.append(device)
                 return devices
         except aiohttp.ClientResponseError as e:
             _LOGGER.error("Failed to get devices: %s %s", e.status, e.message)

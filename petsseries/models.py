@@ -48,10 +48,22 @@ class Home:
 
     id: str
     name: str
-    shared: bool
-    number_of_devices: int
-    external_id: str
-    number_of_activities: int
+    # Legacy fields (may not be present in new API)
+    shared: bool = False
+    number_of_devices: int = 0
+    external_id: str = ""
+    number_of_activities: int = 0
+
+    # New API fields
+    url: str = ""
+    devices_url: str = ""
+    events_url: str = ""
+    invites_url: str = ""
+    time_zone: Optional[str] = None
+    active_mode: Optional[str] = None
+    modes: Optional[List[Dict[str, Any]]] = None
+    members: Optional[List[Dict[str, Any]]] = None
+    vendor_ids: Optional[Dict[str, Any]] = None
 
     def get_home_id(self) -> str:
         """Retrieve the home's unique identifier."""
@@ -108,12 +120,13 @@ class Device:
 
     id: str
     name: str
-    product_ctn: str
-    product_id: str
-    external_id: str
-    url: str
-    settings_url: str
-    subscription_url: str
+    product_ctn: Optional[str] = None
+    product_id: Optional[str] = None
+    vendor_id: Optional[str] = None
+    external_id: Optional[str] = None
+    url: str = ""
+    settings_url: str = ""
+    subscription_url: Optional[str] = None
 
     def get_device_id(self) -> str:
         """Retrieve the device's unique identifier."""
@@ -138,6 +151,11 @@ class Consumer:
     id: str
     country_code: str
     url: str
+    language: Optional[str] = None
+    identities: Optional[Dict[str, Any]] = None
+    identities_url: Optional[str] = None
+    installations: Optional[List[Dict[str, Any]]] = None
+    installations_url: Optional[str] = None
 
 
 @dataclass
