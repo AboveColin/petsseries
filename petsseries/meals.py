@@ -5,13 +5,13 @@ MealsManager module for handling meal-related operations in the PetsSeriesClient
 """
 
 import logging
-from typing import List
 import urllib.parse
+from typing import Any, List
 
-import aiohttp
+import aiohttp  # type: ignore[import-not-found]
 
-from .models import Meal, Home
 from .config import Config
+from .models import Home, Meal
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,32 +87,72 @@ class MealsManager:
         url = f"{self.config.base_url}/api/homes/{home.id}/meals/{meal.id}"
 
         # Prepare the payload with updated fields
+        def _to_iso8601(value):
+            try:
+                # datetime/date/time objects
+                return value.isoformat()  # type: ignore[attr-defined]
+            except Exception:
+                return str(value)
+
+        # Normalize repeat days to a list of ints
+        repeat_days: List[int] = (
+            meal.repeat_days if meal.repeat_days else [1, 2, 3, 4, 5, 6, 7]
+        )
+
         payload = {
             "name": meal.name,
             "portionAmount": meal.portion_amount,
-            "feedTime": meal.feed_time.isoformat(),
-            "repeatDays": meal.repeat_days or [1, 2, 3, 4, 5, 6, 7],
+            "feedTime": _to_iso8601(meal.feed_time),
+            "repeatDays": repeat_days,
         }
 
         session = await self.client.get_client()
         try:
-            async with session.patch(
-                url, headers=self.client.headers, json=payload
-            ) as response:
+            headers = {
+                **self.client.headers,
+                "Content-Type": "application/json; charset=UTF-8",
+            }
+            async with session.patch(url, headers=headers, json=payload) as response:
                 if response.status == 200:
                     updated_data = await response.json()
                     _LOGGER.info("Meal %s updated successfully.", meal.id)
+
+                    def _ensure_int_list(value: Any, fallback: List[int]) -> List[int]:
+                        if isinstance(value, list):
+                            result: List[int] = []
+                            for v in value:
+                                try:
+                                    result.append(int(v))
+                                except Exception:
+                                    continue
+                            return result or fallback
+                        return fallback
+
+                    parsed_repeat_days = _ensure_int_list(
+                        updated_data.get("repeatDays"), repeat_days
+                    )
                     return Meal(
                         id=updated_data["id"],
                         name=updated_data["name"],
                         portion_amount=updated_data["portionAmount"],
                         feed_time=updated_data["feedTime"],
-                        repeat_days=updated_data.get(
-                            "repeatDays", [1, 2, 3, 4, 5, 6, 7]
-                        ),
+                        repeat_days=parsed_repeat_days,
                         device_id=updated_data["deviceId"],
                         enabled=updated_data.get("enabled", True),
                         url=updated_data["url"],
+                    )
+                if response.status == 204:
+                    _LOGGER.info("Meal %s updated successfully (no content).", meal.id)
+                    # Return the provided meal as the updated representation
+                    return Meal(
+                        id=meal.id,
+                        name=meal.name,
+                        portion_amount=meal.portion_amount,
+                        feed_time=_to_iso8601(meal.feed_time),
+                        repeat_days=repeat_days,
+                        device_id=meal.device_id,
+                        enabled=getattr(meal, "enabled", True),
+                        url=getattr(meal, "url", url),
                     )
                 text = await response.text()
                 _LOGGER.error(
@@ -127,6 +167,7 @@ class MealsManager:
         except Exception as e:
             _LOGGER.error("Unexpected error in update_meal: %s", e)
             raise
+        raise RuntimeError("Failed to update meal")
 
     async def create_meal(self, home: Home, meal: Meal) -> Meal:
         """
@@ -145,13 +186,19 @@ class MealsManager:
         """
         await self.client.ensure_token_valid()
         if meal.repeat_days is None:
-            repeat_days = [1, 2, 3, 4, 5, 6, 7]
+            repeat_days: List[int] = [1, 2, 3, 4, 5, 6, 7]
         else:
             repeat_days = meal.repeat_days
 
+        def _to_iso8601(value):
+            try:
+                return value.isoformat()  # type: ignore[attr-defined]
+            except Exception:
+                return str(value)
+
         payload = {
             "deviceId": meal.device_id,
-            "feedTime": meal.feed_time.isoformat(),
+            "feedTime": _to_iso8601(meal.feed_time),
             "name": meal.name,
             "portionAmount": meal.portion_amount,
             "repeatDays": repeat_days,
@@ -159,12 +206,15 @@ class MealsManager:
 
         session = await self.client.get_client()
         try:
+            headers = {
+                **self.client.headers,
+                "Content-Type": "application/json; charset=UTF-8",
+            }
             async with session.post(
                 f"{self.config.base_url}/api/homes/{home.id}/meals",
-                headers=self.client.headers,
+                headers=headers,
                 json=payload,
             ) as response:
-
                 if response.status == 201:
                     location = response.headers.get("Location")
                     if not location:
@@ -186,11 +236,26 @@ class MealsManager:
                         id=meal_id,
                         name=meal.name,
                         portion_amount=meal.portion_amount,
-                        feed_time=meal.feed_time.isoformat(),
+                        feed_time=_to_iso8601(meal.feed_time),
                         repeat_days=repeat_days,
                         device_id=meal.device_id,
                         enabled=True,
                         url=location,
+                    )
+                if response.status == 200:
+                    created = await response.json()
+                    _LOGGER.info(
+                        "Meal created successfully with ID: %s", created.get("id")
+                    )
+                    return Meal(
+                        id=created["id"],
+                        name=created["name"],
+                        portion_amount=created["portionAmount"],
+                        feed_time=created["feedTime"],
+                        repeat_days=created.get("repeatDays", repeat_days),
+                        device_id=created["deviceId"],
+                        enabled=created.get("enabled", True),
+                        url=created.get("url", ""),
                     )
                 text = await response.text()
                 _LOGGER.error("Failed to create meal: %s %s", response.status, text)
@@ -201,6 +266,7 @@ class MealsManager:
         except Exception as e:
             _LOGGER.error("Unexpected error in create_meal: %s", e)
             raise
+        raise RuntimeError("Failed to create meal")
 
     async def set_meal_enabled(self, home: Home, meal_id: str, enabled: bool) -> bool:
         """
@@ -256,6 +322,7 @@ class MealsManager:
         except Exception as e:
             _LOGGER.error("Unexpected error in set_meal_enabled: %s", e)
             raise
+        return False
 
     async def enable_meal(self, home: Home, meal_id: str) -> bool:
         """
@@ -305,3 +372,4 @@ class MealsManager:
         except Exception as e:
             _LOGGER.error("Unexpected error in delete_meal: %s", e)
             raise
+        return False
