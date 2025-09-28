@@ -8,29 +8,29 @@ data retrieval, and device management for the PetsSeries application.
 import logging
 from typing import Any, Dict, Optional
 
-import aiohttp
+import aiohttp  # type: ignore[import-not-found]
 
 from .auth import AuthManager
-from .models import (
-    User,
-    Home,
-    Device,
-    Consumer,
-    ModeDevice,
-)
 from .config import Config
-from .session import create_ssl_context
+from .events import EventsManager
 
 # Import MealsManager
 from .meals import MealsManager
-from .events import EventsManager
+from .models import (
+    Consumer,
+    Device,
+    Home,
+    ModeDevice,
+    User,
+)
+from .session import create_ssl_context
 
 # Optional import for Tuya
 try:
     from .tuya import TuyaClient, TuyaError
 except ImportError:
-    TuyaClient = None
-    TuyaError = Exception
+    TuyaClient = None  # type: ignore[assignment, misc]
+    TuyaError = Exception  # type: ignore[assignment, misc]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,8 +53,8 @@ class PetsSeriesClient:
     ):
         self.auth = AuthManager(token_file, access_token, refresh_token)
         self.session = None
-        self.headers = {}
-        self.headers_token = {}
+        self.headers: Dict[str, str] = {}
+        self.headers_token: Dict[str, str] = {}
         self.timeout = aiohttp.ClientTimeout(total=10.0)
         self.config = Config()
         self.tuya_client: Optional[TuyaClient] = None  # type: ignore
@@ -74,7 +74,7 @@ class PetsSeriesClient:
                     client_id=tuya_credentials["client_id"],
                     ip=tuya_credentials["ip"],
                     local_key=tuya_credentials["local_key"],
-                    version=tuya_credentials.get("version", 3.4),
+                    version=float(tuya_credentials.get("version", 3.4)),
                 )
                 _LOGGER.info("TuyaClient initialized successfully.")
             except TuyaError as e:
@@ -102,7 +102,9 @@ class PetsSeriesClient:
         Initialize the client by loading tokens and refreshing the access token if necessary.
         """
         if self.auth.access_token and self.auth.refresh_token:
-            await self.auth.save_tokens(str(self.auth.access_token), str(self.auth.refresh_token))
+            await self.auth.save_tokens(
+                str(self.auth.access_token), str(self.auth.refresh_token)
+            )
         await self.auth.load_tokens()
         if await self.auth.is_token_expired():
             _LOGGER.info("Access token expired, refreshing...")
@@ -188,8 +190,12 @@ class PetsSeriesClient:
             ) as response:
                 response.raise_for_status()
                 data = await response.json()
+                # New consumer endpoint observed returns: id, identities, installations, url, identitiesUrl, installationsUrl, language
+                # countryCode may be absent; set to empty string if missing for backward compatibility
                 return Consumer(
-                    id=data["id"], country_code=data["countryCode"], url=data["url"]
+                    id=str(data.get("id", "")),
+                    country_code=str(data.get("countryCode", "")),
+                    url=str(data.get("url", "")),
                 )
         except aiohttp.ClientResponseError as e:
             _LOGGER.error("Failed to get Consumer: %s %s", e.status, e.message)
@@ -210,16 +216,19 @@ class PetsSeriesClient:
             ) as response:
                 response.raise_for_status()
                 homes_data = await response.json()
+                items = homes_data.get(
+                    "item", homes_data if isinstance(homes_data, list) else []
+                )
                 homes = [
                     Home(
-                        id=home["id"],
-                        name=home["name"],
-                        shared=home["shared"],
-                        number_of_devices=home["numberOfDevices"],
-                        external_id=home["externalId"],
-                        number_of_activities=home["numberOfActivities"],
+                        id=home.get("id", ""),
+                        name=home.get("name", ""),
+                        shared=bool(home.get("shared", False)),
+                        number_of_devices=int(home.get("numberOfDevices", 0)),
+                        external_id=str(home.get("externalId", "")),
+                        number_of_activities=int(home.get("numberOfActivities", 0)),
                     )
-                    for home in homes_data
+                    for home in items
                 ]
                 return homes
         except aiohttp.ClientResponseError as e:
@@ -234,10 +243,7 @@ class PetsSeriesClient:
         Get devices for the selected home.
         """
         await self.ensure_token_valid()
-        url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/devices"
-        )
+        url = f"{self.config.base_url}/api/homes/{home.id}/devices"
         session = await self.get_client()
         try:
             async with session.get(url, headers=self.headers) as response:
@@ -269,10 +275,7 @@ class PetsSeriesClient:
         Get mode devices for the selected home.
         """
         await self.ensure_token_valid()
-        url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/modes/home/devices"
-        )
+        url = f"{self.config.base_url}/api/homes/{home.id}/modes/home/devices"
         session = await self.get_client()
         try:
             async with session.get(url, headers=self.headers) as response:
@@ -298,8 +301,7 @@ class PetsSeriesClient:
         """
         await self.ensure_token_valid()
         url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/modes/home/devices/{device_id}"
+            f"{self.config.base_url}/api/homes/{home.id}/modes/home/devices/{device_id}"
         )
 
         headers = {
