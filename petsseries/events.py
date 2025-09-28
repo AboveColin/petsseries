@@ -5,25 +5,25 @@ EventsManager module for handling event-related operations in the PetsSeriesClie
 """
 
 import logging
-from typing import List
 import urllib.parse
+from typing import List
 
-import aiohttp
+import aiohttp  # type: ignore[import-not-found]
 
+from .config import Config
 from .models import (
-    Home,
-    Event,
-    MotionEvent,
-    MealDispensedEvent,
-    MealUpcomingEvent,
-    FoodLevelLowEvent,
-    MealEnabledEvent,
-    FilterReplacementDueEvent,
-    FoodOutletStuckEvent,
     DeviceOfflineEvent,
     DeviceOnlineEvent,
+    Event,
+    FilterReplacementDueEvent,
+    FoodLevelLowEvent,
+    FoodOutletStuckEvent,
+    Home,
+    MealDispensedEvent,
+    MealEnabledEvent,
+    MealUpcomingEvent,
+    MotionEvent,
 )
-from .config import Config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,8 +88,7 @@ class EventsManager:
         to_date_encoded = urllib.parse.quote(to_date.isoformat())
 
         url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/events"
+            f"{self.config.base_url}/api/homes/{home.id}/events"
             f"?from={from_date_encoded}&to={to_date_encoded}&clustered={clustered}"
             f"{types_param}"
         )
@@ -126,10 +125,7 @@ class EventsManager:
             Exception: For any unexpected errors.
         """
         await self.client.ensure_token_valid()
-        url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/events/{event_id}"
-        )
+        url = f"{self.config.base_url}/api/homes/{home.id}/events/{event_id}"
         session = await self.client.get_client()
         try:
             async with session.get(url, headers=self.client.headers) as response:
@@ -159,11 +155,11 @@ class EventsManager:
         match event_type:
             case "motion_detected":
                 return MotionEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
+                    id=str(event.get("id", "")),
+                    type=str(event_type),
+                    source=str(event.get("source", "")),
+                    time=str(event.get("time", "")),
+                    url=str(event.get("url", "")),
                     cluster_id=event.get("clusterId"),
                     metadata=event.get("metadata"),
                     thumbnail_key=event.get("thumbnailKey"),
@@ -175,11 +171,11 @@ class EventsManager:
                 )
             case "meal_dispensed":
                 return MealDispensedEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
+                    id=str(event.get("id", "")),
+                    type=str(event_type),
+                    source=str(event.get("source", "")),
+                    time=str(event.get("time", "")),
+                    url=str(event.get("url", "")),
                     cluster_id=event.get("clusterId"),
                     metadata=event.get("metadata"),
                     meal_name=event.get("mealName"),
@@ -192,11 +188,11 @@ class EventsManager:
                 )
             case "meal_upcoming":
                 return MealUpcomingEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
+                    id=str(event.get("id", "")),
+                    type=str(event_type),
+                    source=str(event.get("source", "")),
+                    time=str(event.get("time", "")),
+                    url=str(event.get("url", "")),
                     cluster_id=event.get("clusterId"),
                     metadata=event.get("metadata"),
                     meal_name=event.get("mealName"),
@@ -209,11 +205,11 @@ class EventsManager:
                 )
             case "food_level_low":
                 return FoodLevelLowEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
+                    id=str(event.get("id", "")),
+                    type=str(event_type),
+                    source=str(event.get("source", "")),
+                    time=str(event.get("time", "")),
+                    url=str(event.get("url", "")),
                     cluster_id=event.get("clusterId"),
                     metadata=event.get("metadata"),
                     device_id=event.get("deviceId"),
@@ -223,11 +219,11 @@ class EventsManager:
                 )
             case "meal_enabled":
                 return MealEnabledEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
+                    id=str(event.get("id", "")),
+                    type=str(event_type),
+                    source=str(event.get("source", "")),
+                    time=str(event.get("time", "")),
+                    url=str(event.get("url", "")),
                     cluster_id=event.get("clusterId"),
                     metadata=event.get("metadata"),
                     meal_amount=event.get("mealAmount"),
@@ -241,11 +237,11 @@ class EventsManager:
                 )
             case "filter_replacement_due":
                 return FilterReplacementDueEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
+                    id=str(event.get("id", "")),
+                    type=str(event_type),
+                    source=str(event.get("source", "")),
+                    time=str(event.get("time", "")),
+                    url=str(event.get("url", "")),
                     cluster_id=event.get("clusterId"),
                     metadata=event.get("metadata"),
                     device_id=event.get("deviceId"),
@@ -255,11 +251,11 @@ class EventsManager:
                 )
             case "food_outlet_stuck":
                 return FoodOutletStuckEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
+                    id=str(event.get("id", "")),
+                    type=str(event_type),
+                    source=str(event.get("source", "")),
+                    time=str(event.get("time", "")),
+                    url=str(event.get("url", "")),
                     cluster_id=event.get("clusterId"),
                     metadata=event.get("metadata"),
                     device_id=event.get("deviceId"),
@@ -269,11 +265,11 @@ class EventsManager:
                 )
             case "device_offline":
                 return DeviceOfflineEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
+                    id=str(event.get("id", "")),
+                    type=str(event_type),
+                    source=str(event.get("source", "")),
+                    time=str(event.get("time", "")),
+                    url=str(event.get("url", "")),
                     cluster_id=event.get("clusterId"),
                     metadata=event.get("metadata"),
                     device_id=event.get("deviceId"),
@@ -283,11 +279,11 @@ class EventsManager:
                 )
             case "device_online":
                 return DeviceOnlineEvent(
-                    id=event.get("id"),
-                    type=event_type,
-                    source=event.get("source"),
-                    time=event.get("time"),
-                    url=event.get("url"),
+                    id=str(event.get("id", "")),
+                    type=str(event_type),
+                    source=str(event.get("source", "")),
+                    time=str(event.get("time", "")),
+                    url=str(event.get("url", "")),
                     cluster_id=event.get("clusterId"),
                     metadata=event.get("metadata"),
                     device_id=event.get("deviceId"),
@@ -299,9 +295,9 @@ class EventsManager:
                 _LOGGER.warning("Unknown event type: %s", event_type)
                 # Generic event
                 return Event(
-                    id=event["id"],
-                    type=event_type,
-                    source=event["source"],
-                    time=event["time"],
-                    url=event["url"],
+                    id=str(event.get("id", "")),
+                    type=str(event_type),
+                    source=str(event.get("source", "")),
+                    time=str(event.get("time", "")),
+                    url=str(event.get("url", "")),
                 )

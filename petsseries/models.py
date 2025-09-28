@@ -7,7 +7,7 @@ including users, homes, meals, devices, consumers, mode devices, and various eve
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -73,7 +73,7 @@ class Meal:
         name (str): Name of the meal.
         portion_amount (float): Amount of the portion.
         feed_time (str): Scheduled feeding time.
-        repeat_days (List[str]): Days when the meal repeats.
+        repeat_days (List[int]): Days when the meal repeats.
         device_id (str): Identifier of the device associated with the meal.
         enabled (bool): Indicates if the meal is enabled.
         url (str): URL endpoint for the meal.
@@ -83,7 +83,7 @@ class Meal:
     name: str
     portion_amount: float
     feed_time: str
-    repeat_days: List[str]
+    repeat_days: List[int]
     device_id: str
     enabled: bool
     url: str
@@ -148,12 +148,12 @@ class ModeDevice:
     Attributes:
         id (str): Unique identifier for the mode device.
         name (str): Name of the mode device.
-        settings (Dict[str, Dict[str, any]]): Settings associated with the mode device.
+    settings (Dict[str, Dict[str, Any]]): Settings associated with the mode device.
     """
 
     id: str
     name: str
-    settings: Dict[str, Dict[str, any]]
+    settings: Dict[str, Dict[str, Any]]
 
 
 class EventType(Enum):
@@ -184,7 +184,7 @@ class Event:
     """
 
     id: str
-    type: EventType
+    type: str
     source: str
     time: str
     url: str
