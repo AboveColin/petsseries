@@ -47,7 +47,7 @@ class MealsManager:
                         id=meal["id"],
                         name=meal["name"],
                         portion_amount=meal.get("portionAmount") if meal.get("portionAmount") is not None else meal.get("amount"),
-                        feed_time=meal.get("feedTime") or meal.get("time"),
+                        feed_time=meal.get("feedTime") if meal.get("feedTime") is not None else meal.get("time"),
                         repeat_days=meal["repeatDays"],
                         device_id=meal["deviceId"],
                         enabled=meal["enabled"],
