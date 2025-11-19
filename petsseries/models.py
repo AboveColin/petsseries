@@ -33,7 +33,7 @@ class User:
 
 
 @dataclass
-class Home:
+class Home:  # pylint: disable=too-many-instance-attributes
     """
     Represents a home associated with a user.
 
