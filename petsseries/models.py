@@ -487,3 +487,248 @@ class DeviceOfflineEvent(Event):
         """Return a string representation of the device offline event."""
         base_repr = super().__repr__()
         return f"{base_repr} device_id={self.device_id} device_name={self.device_name}"
+
+
+# ============================================================================
+# HOME INVITE MODELS
+# ============================================================================
+
+
+class HomeInviteRole(Enum):
+    """Enum for home invite roles."""
+
+    MEMBER = "MEMBER"
+    ADMIN = "ADMIN"
+
+
+class HomeInviteStatus(Enum):
+    """Enum for home invite statuses."""
+
+    CREATED = "created"
+    ACCEPTED = "accepted"
+    EXPIRED = "expired"
+    PENDING = "pending"
+
+
+@dataclass
+class HomeInvite:
+    """
+    Represents a home invitation in the PetsSeries system.
+
+    Attributes:
+        id (str): Unique identifier for the invite.
+        email (str): Email address of the invitee.
+        label (str): Display name/label for the invitee.
+        role (HomeInviteRole): Role assigned to the invitee.
+        status (HomeInviteStatus): Current status of the invitation.
+        created_at (Optional[str]): Timestamp when the invite was created.
+        url (Optional[str]): URL endpoint for the invite.
+    """
+
+    id: str
+    email: str
+    label: str
+    role: HomeInviteRole
+    status: HomeInviteStatus
+    created_at: Optional[str] = None
+    url: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "HomeInvite":
+        """Create a HomeInvite from a dictionary."""
+        role_str = data.get("role", "MEMBER")
+        # Ensure role is uppercase to match Enum
+        if isinstance(role_str, str):
+            role_str = role_str.upper()
+            
+        return cls(
+            id=data.get("id", ""),
+            email=data.get("email", ""),
+            label=data.get("label", ""),
+            role=HomeInviteRole(role_str),
+            status=HomeInviteStatus(data.get("status", "created")),
+            created_at=data.get("createdAt"),
+            url=data.get("url"),
+        )
+
+
+# ============================================================================
+# DEVICE SETTINGS MODELS
+# ============================================================================
+
+
+@dataclass
+class FilterTime:
+    """
+    Represents filter replacement/application time.
+
+    Attributes:
+        type (str): Type of filter (e.g., "fountain").
+        value (str): ISO 8601 datetime value.
+        format (Optional[str]): Format of the value (e.g., "datetime").
+    """
+
+    type: str
+    value: str
+    format: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["FilterTime"]:
+        """Create a FilterTime from a dictionary."""
+        if not data:
+            return None
+        return cls(
+            type=data.get("type", ""),
+            value=data.get("value", ""),
+            format=data.get("format"),
+        )
+
+
+@dataclass
+class FeederVoiceAudio:
+    """
+    Represents feeder voice audio settings.
+
+    Attributes:
+        audio_id (str): Unique identifier for the audio.
+        url (Optional[str]): URL to download/upload the audio.
+        recorded (bool): Whether a custom recording exists.
+    """
+
+    audio_id: str
+    url: Optional[str] = None
+    recorded: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["FeederVoiceAudio"]:
+        """Create a FeederVoiceAudio from a dictionary."""
+        if not data:
+            return None
+        return cls(
+            audio_id=data.get("audioId", ""),
+            url=data.get("url"),
+            recorded=data.get("recorded", False),
+        )
+
+
+@dataclass
+class DeviceSettings:
+    """
+    Represents detailed device settings.
+
+    Attributes:
+        filter_replacement_time (Optional[FilterTime]): Filter replacement time.
+        filter_application_time (Optional[FilterTime]): Filter application time.
+        feeder_voice_audio_id (Optional[FeederVoiceAudio]): Voice audio settings.
+    """
+
+    filter_replacement_time: Optional[FilterTime] = None
+    filter_application_time: Optional[FilterTime] = None
+    feeder_voice_audio_id: Optional[FeederVoiceAudio] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DeviceSettings":
+        """Create DeviceSettings from a dictionary."""
+        return cls(
+            filter_replacement_time=FilterTime.from_dict(
+                data.get("filter_replacement_time")
+            ),
+            filter_application_time=FilterTime.from_dict(
+                data.get("filter_application_time")
+            ),
+            feeder_voice_audio_id=FeederVoiceAudio.from_dict(
+                data.get("feeder_voice_audio_id")
+            ),
+        )
+
+
+# ============================================================================
+# DISCOVERY SERVICE MODELS
+# ============================================================================
+
+
+@dataclass
+class AppRelease:
+    """
+    Represents app release information.
+
+    Attributes:
+        min_version (str): Minimum supported version.
+        current_version (str): Current/latest version.
+    """
+
+    min_version: str
+    current_version: str
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["AppRelease"]:
+        """Create an AppRelease from a dictionary."""
+        if not data:
+            return None
+        return cls(
+            min_version=data.get("minVersion", ""),
+            current_version=data.get("currentVersion", ""),
+        )
+
+
+@dataclass
+class CountryInfo:
+    """
+    Represents country information from discovery service.
+
+    Attributes:
+        code (str): ISO country code.
+        name (str): Country name.
+        dial_code (Optional[str]): Phone dial code.
+    """
+
+    code: str
+    name: str
+    dial_code: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CountryInfo":
+        """Create a CountryInfo from a dictionary."""
+        return cls(
+            code=data.get("code", ""),
+            name=data.get("name", ""),
+            dial_code=data.get("dialCode"),
+        )
+
+
+@dataclass
+class DiscoveryConfig:
+    """
+    Represents the discovery service configuration.
+
+    Attributes:
+        id (str): Configuration identifier.
+        api_url (str): Main API URL.
+        consumer_url (str): Consumer API URL.
+        countries (List[CountryInfo]): List of supported countries.
+        android_release (Optional[AppRelease]): Android app release info.
+        ios_release (Optional[AppRelease]): iOS app release info.
+    """
+
+    id: str
+    api_url: str
+    consumer_url: str
+    countries: List["CountryInfo"]
+    android_release: Optional[AppRelease] = None
+    ios_release: Optional[AppRelease] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DiscoveryConfig":
+        """Create a DiscoveryConfig from a dictionary."""
+        countries = [
+            CountryInfo.from_dict(c) for c in data.get("countries", [])
+        ]
+        app_releases = data.get("appReleases", {})
+        return cls(
+            id=data.get("id", ""),
+            api_url=data.get("apiUrl", ""),
+            consumer_url=data.get("consumerUrl", ""),
+            countries=countries,
+            android_release=AppRelease.from_dict(app_releases.get("android")),
+            ios_release=AppRelease.from_dict(app_releases.get("ios")),
+        )
