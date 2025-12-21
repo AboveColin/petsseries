@@ -67,18 +67,25 @@ class EventsManager:
         await self.client.ensure_token_valid()
         if types != "none":
             valid_event_types = Event.get_event_types()
-            requested_types = set(str(types).split(","))
-            requested_types = {et.replace("EventType.", "") for et in requested_types}
-            invalid_types = requested_types - {et.name for et in valid_event_types}
+            requested_types_raw = set(str(types).split(","))
+            requested = {t.replace("EventType.", "") for t in requested_types_raw}
+
+            valid_names = {et.name for et in valid_event_types}
+            valid_values = {et.value for et in valid_event_types}
+
+            invalid_types = [
+                t for t in requested if t not in valid_names and t not in valid_values
+            ]
+
             if invalid_types:
                 _LOGGER.error("Invalid event types: %s", invalid_types)
                 raise ValueError(f"Invalid event types: {invalid_types}")
 
-            # Map event type names to their corresponding values
+            # Map event type names/values to their corresponding values for the API
             types_mapped = [
                 str(event_type.value)
                 for event_type in valid_event_types
-                if event_type.name in requested_types
+                if event_type.name in requested or event_type.value in requested
             ]
             types_param = f"&types={','.join(types_mapped)}" if types_mapped else ""
         else:
