@@ -10,15 +10,20 @@ The Unofficial PetsSeries API Client is a Python library designed to interact wi
 
 ## Features
 - **Authentication Management:** Handles access and refresh tokens, including automatic refreshing when expired.
+- **PKCE OAuth 2.0 Flow:** Full support for the secure PKCE authentication flow used by the official app.
 - **Comprehensive API Coverage:** Methods to interact with user info, homes, devices, meals, events, and device settings.
-- **Schedule Management:** Methods to manage schedules
-- **Food Dispenser Control:** Methods to control food dispensers (Requires Tuya)
+- **Home Management:** Create, rename, delete homes and manage home sharing invitations.
+- **Device Management:** Add, rename, delete devices and manage device settings.
+- **Schedule Management:** Methods to manage meal schedules.
+- **Food Dispenser Control:** Methods to control food dispensers (Requires Tuya).
 - **Event Parsing:** Automatically parses different event types into structured Python objects.
+- **Discovery Service:** Access global configuration and API URLs without authentication.
 
 ## Features to be Added
 - **Camera Feed Access:** Methods to access the camera feed
 
 (feel free to PR if you manage to implement any of these features)
+
 
 ## Installation
 Ensure you have Python 3.10 or higher installed. You can install the package using pip:
@@ -28,26 +33,65 @@ pip install -r requirements.txt
 ```
 
 ## Authentication
-This client uses OAuth2 tokens (access_token and refresh_token) to authenticate with the PetsSeries API. Follow the steps below to obtain and set up your tokens.
 
-### Obtaining Tokens
-1. Login via Web Interface:
+This client supports two methods of authentication with the PetsSeries API:
 
-    - Navigate to [PetsSeries Appliance Login](https://www.home.id/find-appliance).
-    - Select a PetsSeries product (Starts with PAW) and log in with your credentials.
+### Method 1: PKCE OAuth Flow (Recommended)
 
-2. Retrieve Tokens:
+The library includes full support for the PKCE (Proof Key for Code Exchange) OAuth 2.0 flow, which is the same method used by the official Philips app. This is more secure and doesn't require manually extracting tokens.
 
-    - After logging in, you will be redirected to a "Thanks for your purchase" screen.
-    - Open your browser's developer tools (usually by pressing F12 or Ctrl+Shift+I).
-    - Go to the Application tab and inspect the cookies.
-    - Locate and copy the cc-access-token and cc-refresh-token from the cookies.
+```python
+import asyncio
+from petsseries import AuthManager
 
-3. Provide Tokens to the Client:
+async def authenticate():
+    async with AuthManager() as auth:
+        # Step 1: Generate authorization URL
+        auth_data = await auth.get_authorization_url()
+        
+        print("Please open this URL in your browser:")
+        print(auth_data["authorization_url"])
+        print()
+        print("After logging in, you'll be redirected to 'paw://login?code=...'")
+        print("Copy that entire URL and paste it below:")
+        
+        callback_url = input("Callback URL: ").strip()
+        
+        # Step 2: Parse the callback URL
+        callback_data = AuthManager.parse_callback_url(callback_url)
+        
+        # Step 3: Exchange authorization code for tokens
+        tokens = await auth.exchange_authorization_code(
+            authorization_code=callback_data["code"],
+            code_verifier=auth_data["code_verifier"]
+        )
+        
+        print(f"Access Token: {tokens['access_token'][:50]}...")
+        print(f"Refresh Token: {tokens['refresh_token'][:50]}...")
+        print("Tokens have been saved to tokens.json")
 
-    - You can provide the access_token and refresh_token when initializing the client. These tokens will be saved to tokens.json for future use.
+asyncio.run(authenticate())
+```
+
+### Method 2: Manual Token Extraction (Fallback)
+
+If you prefer to extract tokens manually:
+
+1. **Login via Web Interface:**
+   - Navigate to [PetsSeries Appliance Login](https://www.home.id/find-appliance).
+   - Select a PetsSeries product (Starts with PAW) and log in with your credentials.
+
+2. **Retrieve Tokens:**
+   - After logging in, you will be redirected to a "Thanks for your purchase" screen.
+   - Open your browser's developer tools (usually by pressing F12 or Ctrl+Shift+I).
+   - Go to the Application tab and inspect the cookies.
+   - Locate and copy the `cc-access-token` and `cc-refresh-token` from the cookies.
+
+3. **Provide Tokens to the Client:**
+   - You can provide the `access_token` and `refresh_token` when initializing the client.
 
 ### Example Initialization with Tokens
+
 ```python
 import asyncio
 from petsseries import PetsSeriesClient
@@ -62,6 +106,7 @@ async def main():
 
 asyncio.run(main())
 ```
+
 After the first run, the tokens will be saved automatically, and you won't need to provide them again unless they are invalidated.
 
 ## Tuya Integration (Optional)
@@ -209,7 +254,144 @@ updated_meal = await client.update_meal(home, meal_to_update)
 print(f"Meal updated: {updated_meal}")
 ```
 
-### Managing Devices
+### Home Management
+The client provides a `HomesManager` for managing homes and home invitations. This supports sharing homes with family members.
+
+#### Create a Home
+```python
+# Create a new home
+new_home = await client.homes_manager.create_home("My New Home")
+print(f"Created home: {new_home.name} (ID: {new_home.id})")
+```
+
+#### Rename a Home
+```python
+# Rename an existing home
+home = homes[0]
+success = await client.homes_manager.rename_home(home, "Updated Home Name")
+if success:
+    print("Home renamed successfully!")
+```
+
+#### Delete a Home
+```python
+# Delete a home
+success = await client.homes_manager.delete_home(home)
+if success:
+    print("Home deleted successfully!")
+```
+
+#### Home Invitations
+Share your home with family members using invitations:
+
+```python
+from petsseries import HomeInviteRole
+
+# Get all invites for a home
+invites = await client.homes_manager.get_invites(home)
+for invite in invites:
+    print(f"Invite: {invite.email} - {invite.status.value}")
+
+# Send a new invitation
+success = await client.homes_manager.send_invite(
+    home=home,
+    email="family@example.com",
+    label="Mom",
+    role=HomeInviteRole.MEMBER  # or HomeInviteRole.ADMIN
+)
+if success:
+    print("Invitation sent!")
+
+# Resend an invitation
+success = await client.homes_manager.resend_invite(home, invite_token)
+
+# Update invite label
+success = await client.homes_manager.update_invite_label(home, invite_token, "Dad")
+
+# Delete/reject an invitation
+success = await client.homes_manager.delete_invite(home, invite_token)
+```
+
+### Device Management
+The client provides a `DevicesManager` for extended device operations.
+
+#### Add a Device
+```python
+# Add a new device using product CTN
+success = await client.devices_manager.add_device(home, product_ctn="PAW5320")
+if success:
+    print("Device added successfully!")
+```
+
+#### Rename a Device
+```python
+# Rename an existing device
+device = devices[0]
+success = await client.devices_manager.rename_device(home, device, "Kitchen Feeder")
+if success:
+    print("Device renamed!")
+```
+
+#### Delete a Device
+```python
+# Remove/unpair a device
+success = await client.devices_manager.delete_device(home, device)
+if success:
+    print("Device removed!")
+```
+
+#### Get Device Settings
+```python
+# Get detailed device settings (filter times, voice audio, etc.)
+settings = await client.devices_manager.get_device_settings(home, device)
+if settings.filter_replacement_time:
+    print(f"Filter replacement due: {settings.filter_replacement_time.value}")
+if settings.feeder_voice_audio_id:
+    print(f"Voice audio: {settings.feeder_voice_audio_id.audio_id}")
+```
+
+#### Update Device Settings
+```python
+from datetime import datetime, timezone
+
+# Update filter application time (reset filter timer)
+success = await client.devices_manager.update_device_settings(
+    home=home,
+    device=device,
+    filter_application_time=datetime.now(timezone.utc).isoformat()
+)
+
+# Or use the convenience method to reset the filter
+success = await client.devices_manager.reset_filter(home, device)
+```
+
+### Discovery Service
+The Discovery Service provides global configuration without requiring authentication.
+
+```python
+from petsseries import DiscoveryManager, get_discovery_config
+
+# Quick method - get config without session management
+config = await get_discovery_config()
+print(f"API URL: {config.api_url}")
+print(f"Consumer URL: {config.consumer_url}")
+
+# Full method - with session management
+async with DiscoveryManager() as discovery:
+    config = await discovery.get_discovery_config()
+    
+    # Access country information
+    for country in config.countries:
+        print(f"{country.name} ({country.code})")
+    
+    # Check app version requirements
+    if config.android_release:
+        print(f"Android min version: {config.android_release.min_version}")
+    if config.ios_release:
+        print(f"iOS min version: {config.ios_release.min_version}")
+```
+
+
 You can manage device settings such as powering devices on/off and toggling motion notifications.
 
 #### Device Power
