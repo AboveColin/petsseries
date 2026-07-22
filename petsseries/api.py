@@ -5,6 +5,8 @@ This module provides the PetsSeriesClient class, which handles authentication,
 data retrieval, and device management for the PetsSeries application.
 """
 
+import asyncio
+import hashlib
 import logging
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -30,6 +32,9 @@ from .models import (
     User,
 )
 from .session import create_ssl_context
+from .tuya_cloud import get_tuya_credentials_from_philips, tuya_mobile_action_from_philips
+from .tuya_mobile import TuyaMobileClient
+from .native_signer import NativeTuyaSigner
 
 # Optional import for Tuya local control
 try:
@@ -57,10 +62,12 @@ class PetsSeriesClient:
         refresh_token=None,
         tuya_credentials: Optional[Dict[str, str]] = None,
         token_save_callback: Optional[Callable] = None,
+        id_token=None,
     ):
         self.auth = AuthManager(
             token_file, access_token, refresh_token, save_callback=token_save_callback
         )
+        self.auth.id_token = id_token
         self.session: Optional[aiohttp.ClientSession] = None
         self.headers: Dict[str, str] = {}
         self.headers_token: Dict[str, str] = {}
@@ -68,6 +75,12 @@ class PetsSeriesClient:
         self.config = Config()
         self.tuya_client: Optional[TuyaClient] = None  # type: ignore
         self.tuya_device_credentials: list = []  # List of device credentials (manually set)
+        # Cached Tuya mobile session, reused across cloud calls. Re-logging in on
+        # every call trips Tuya's daily login cap (USER_SESSION_LIMIT), so we log
+        # in once and reuse the session until it expires.
+        self._tuya_mobile: Optional[TuyaMobileClient] = None
+        self._tuya_mobile_session: Optional[aiohttp.ClientSession] = None
+        self._tuya_lock = asyncio.Lock()
 
         # Initialize managers
         self.meals = MealsManager(self)
@@ -160,6 +173,10 @@ class PetsSeriesClient:
             await self.session.close()
             self.session = None
             _LOGGER.debug("aiohttp.ClientSession closed.")
+        if self._tuya_mobile_session:
+            await self._tuya_mobile_session.close()
+            self._tuya_mobile_session = None
+            self._tuya_mobile = None
         await self.auth.close()
 
     def _find_device_credential(self, device_id: str) -> Optional[Dict[str, Any]]:
@@ -242,7 +259,7 @@ class PetsSeriesClient:
         Manually set device credentials (localKey, IP) for a device.
 
         You can obtain the localKey through other means (e.g., from Tuya IoT Platform,
-        tinytuya wizard, or Frida interception).
+        or the tinytuya wizard).
 
         Args:
             device_id: The Tuya device ID (same as vendor_id from Philips API).
@@ -422,6 +439,17 @@ class PetsSeriesClient:
             devices_data = await response.json()
             devices: list[Device] = []
             for d in devices_data.get("item", []):
+                # Philips/Tuya releases have used several names for the OTA
+                # component versions. Preserve all common spellings without
+                # making the public model depend on one response revision.
+                mcu_version = d.get("mcuVersion") or d.get("mcu_version")
+                wifi_version = d.get("wifiVersion") or d.get("wifi_version")
+                firmware = d.get("firmware") if isinstance(d.get("firmware"), dict) else {}
+                ota = d.get("ota") if isinstance(d.get("ota"), dict) else {}
+                mcu_version = mcu_version or firmware.get("mcuVersion") or firmware.get("mcu")
+                wifi_version = wifi_version or firmware.get("wifiVersion") or firmware.get("wifi")
+                mcu_version = mcu_version or ota.get("mcuVersion") or ota.get("mcu")
+                wifi_version = wifi_version or ota.get("wifiVersion") or ota.get("wifi")
                 device = Device(
                     id=str(d.get("id", "")),
                     name=str(d.get("name", "")),
@@ -432,9 +460,55 @@ class PetsSeriesClient:
                     url=str(d.get("url", "")),
                     settings_url=str(d.get("settingsUrl", "")),
                     subscription_url=d.get("subscriptionUrl"),
+                    mcu_version=str(mcu_version) if mcu_version is not None else None,
+                    wifi_version=str(wifi_version) if wifi_version is not None else None,
                 )
                 devices.append(device)
             return devices
+
+    async def get_cloud_device_credentials(
+        self, homes: Optional[List[Home]] = None, country_code: str = "1", region: str = "eu"
+    ) -> List[Dict[str, Any]]:
+        """Retrieve local Tuya credentials using the authenticated Philips login.
+
+        Philips' WebRTC credential endpoint returns the local key; no mobile
+        device session is required. Failures are surfaced as an empty
+        list so callers can keep cloud-only functionality working.
+        """
+        if not self.auth.id_token:
+            return []
+        homes = homes if homes is not None else await self.get_homes()
+        device_ids: List[str] = []
+        for home in homes:
+            for device in await self.get_devices(home):
+                if device.vendor_id:
+                    device_ids.append(str(device.vendor_id))
+        if not device_ids:
+            return []
+        credentials, error = await get_tuya_credentials_from_philips(
+            self.auth.id_token,
+            device_ids,
+            country_code=country_code,
+            region=region,
+        )
+        if error:
+            _LOGGER.warning("Unable to retrieve Tuya credentials from Philips: %s", error)
+        return credentials
+
+    def configure_tuya_credentials(self, credentials: Dict[str, Any]) -> bool:
+        """Attach a local Tuya client from credentials returned by Philips."""
+        if TuyaClient is None:
+            return False
+        required = (credentials.get("device_id"), credentials.get("local_key"), credentials.get("ip"))
+        if not all(required):
+            return False
+        self.tuya_client = TuyaClient(
+            client_id=str(credentials["device_id"]),
+            ip=str(credentials["ip"]),
+            local_key=str(credentials["local_key"]),
+            version=float(credentials.get("version", DeviceConstants.DEFAULT_TUYA_VERSION)),
+        )
+        return True
 
     @handle_api_errors("get mode devices")
     async def get_mode_devices(self, home: Home) -> list[ModeDevice]:
@@ -672,6 +746,177 @@ class PetsSeriesClient:
         else:
             _LOGGER.warning("TuyaClient is not initialized.")
             return False
+
+    async def _tuya_action(
+        self,
+        action: str,
+        payload: Dict[str, Any],
+        *,
+        version: str = "1.0",
+        country_code: str = "1",
+    ) -> Dict[str, Any]:
+        """Call a Tuya mobile action reusing one cached, logged-in session.
+
+        Logging in on every call trips Tuya's daily login cap
+        (USER_SESSION_LIMIT), so we keep a single session and only re-login when
+        it is missing or has expired. A login is never retried on a rate-limit
+        error, which would only make it worse.
+        """
+        if not self.auth.id_token:
+            return {}
+        async with self._tuya_lock:
+            if self._tuya_mobile is None:
+                await self._tuya_login(country_code)
+            try:
+                return await self._tuya_mobile._call(action, payload, version=version)
+            except Exception as err:  # noqa: BLE001 - inspect message to decide retry
+                message = str(err)
+                if "LIMIT" in message.upper():
+                    raise
+                # Likely an expired session: re-login once and retry.
+                _LOGGER.debug("Tuya action %s failed (%s); re-logging in once", action, message)
+                await self._tuya_login(country_code, force=True)
+                return await self._tuya_mobile._call(action, payload, version=version)
+
+    async def _tuya_login(self, country_code: str = "1", *, force: bool = False) -> None:
+        """(Re)establish the cached Tuya mobile session from the Philips token."""
+        if force and self._tuya_mobile_session is not None:
+            await self._tuya_mobile_session.close()
+            self._tuya_mobile = None
+            self._tuya_mobile_session = None
+        # Make sure the Philips id_token is current before the (rare) login.
+        await self.ensure_token_valid()
+        signer = NativeTuyaSigner.from_environment()
+        self._tuya_mobile_session = aiohttp.ClientSession()
+        self._tuya_mobile = TuyaMobileClient(signer, self._tuya_mobile_session)
+        await self._tuya_mobile.login_with_philips_token(self.auth.id_token, country_code)
+
+    async def get_cloud_device_status(self, device_id: str) -> Dict[str, Any]:
+        """Read device DPs through the Philips/Tuya cloud channel."""
+        if not self.auth.id_token:
+            return {}
+        result = await self._tuya_action(
+            "s.m.dev.dp.get", {"devId": device_id, "gwId": device_id}
+        )
+        if isinstance(result, dict) and isinstance(result.get("result"), dict):
+            nested = result["result"]
+            return nested.get("dps", nested)
+        return result if isinstance(result, dict) else {}
+
+    async def get_cloud_device_definition(self, device_id: str) -> Dict[str, Any]:
+        """Read the Tuya device metadata and DP schema without changing state."""
+        if not self.auth.id_token:
+            return {}
+        result = await self._tuya_action("thing.m.device.get", {"devId": device_id})
+        if isinstance(result, dict) and isinstance(result.get("result"), dict):
+            return result["result"]
+        return result if isinstance(result, dict) else {}
+
+    async def get_cloud_webrtc_config(self, device_id: str) -> Dict[str, Any]:
+        """Read the live Tuya WebRTC/P2P signaling config for a camera.
+
+        Uses ``thing.m.ipc.rtc.config.get``, the read-only mobile endpoint the
+        app calls before opening a stream.  Returns the signaling parameters a
+        WebRTC->RTSP bridge needs (``motoId``, ``auth``, ``p2pConfig`` with the
+        current STUN/TURN ICE servers, ``skill``, ``supportsWebrtc``).  These
+        rotate periodically (note the ``expire`` in ``p2pConfig``), so they must
+        be fetched fresh rather than hardcoded.  Contains credential material;
+        never log or expose it as an entity state.
+        """
+        if not self.auth.id_token:
+            return {}
+        result = await self._tuya_action("thing.m.ipc.rtc.config.get", {"devId": device_id})
+        if isinstance(result, dict) and isinstance(result.get("result"), dict):
+            return result["result"]
+        return result if isinstance(result, dict) else {}
+
+    async def get_cloud_firmware_info(self, device_id: str) -> list[Dict[str, Any]]:
+        """Read Tuya OTA metadata without starting an update.
+
+        The mobile SDK uses ``thing.m.device.upgrade.info`` v1.2.  The
+        response contains UpgradeInfoBean records, including type, version,
+        currentVersion, upgradeStatus and (only when authorized/available)
+        the signed package metadata.
+        """
+        if not self.auth.id_token:
+            return []
+        result = await self._tuya_action(
+            "thing.m.device.upgrade.info", {"devId": device_id}, version="1.2"
+        )
+        if isinstance(result, dict):
+            value = result.get("result", result)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+            if isinstance(value, dict):
+                for key in ("list", "data", "upgradeInfo"):
+                    if isinstance(value.get(key), list):
+                        return [item for item in value[key] if isinstance(item, dict)]
+        return []
+
+    async def get_product_firmware_info(
+        self, product_key: str, device_id: str
+    ) -> list[Dict[str, Any]]:
+        """Read product-level OTA metadata through the mobile SDK endpoint."""
+        if not self.auth.id_token or not product_key:
+            return []
+        result = await self._tuya_action(
+            "s.m.upgrade.info",
+            {"productKey": product_key, "devId": device_id},
+            version="2.0",
+        )
+        if isinstance(result, dict):
+            value = result.get("result", result)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+            if isinstance(value, dict):
+                for key in ("list", "data", "upgradeInfo"):
+                    if isinstance(value.get(key), list):
+                        return [item for item in value[key] if isinstance(item, dict)]
+        return []
+
+    async def download_firmware_package(
+        self, upgrade: Dict[str, Any], destination: str, *, max_bytes: int = 512 * 1024 * 1024
+    ) -> str:
+        """Download an OTA artifact for offline inspection; never install it."""
+        url = upgrade.get("url")
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise ValueError("OTA record does not contain an HTTPS download URL")
+        expected_size = int(upgrade.get("fileSize") or 0)
+        if expected_size and expected_size > max_bytes:
+            raise ValueError("OTA artifact exceeds the configured size limit")
+        session = await self.get_client()
+        digest = hashlib.md5()
+        total = 0
+        with open(destination, "wb") as output:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                async for chunk in response.content.iter_chunked(1024 * 1024):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise ValueError("OTA artifact exceeds the configured size limit")
+                    output.write(chunk)
+                    digest.update(chunk)
+        if expected_size and total != expected_size:
+            raise ValueError(f"OTA size mismatch: expected {expected_size}, got {total}")
+        expected_md5 = str(upgrade.get("md5") or "").lower()
+        if expected_md5 and digest.hexdigest().lower() != expected_md5:
+            raise ValueError("OTA MD5 verification failed")
+        return destination
+
+    async def publish_cloud_dps(self, device_id: str, dps: Dict[str, Any]) -> bool:
+        """Write device DPs through the Philips/Tuya cloud channel."""
+        if not self.auth.id_token:
+            return False
+        result = await self._tuya_action(
+            "thing.m.device.dp.publish",
+            {"devId": device_id, "gwId": device_id, "dps": __import__("json").dumps(dps, separators=(",", ":"))},
+        )
+        if result.get("success") is False or result.get("errorCode") or result.get("errorMsg"):
+            raise RuntimeError(
+                "Tuya DP publish failed: "
+                f"{result.get('errorCode') or 'unknown'} {result.get('errorMsg') or ''}".strip()
+            )
+        return True
 
     def toggle_tuya_switch(self, dp_code: str) -> bool:
         """

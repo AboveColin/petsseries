@@ -10,7 +10,8 @@ The Unofficial PetsSeries API Client is a Python library designed to interact wi
 
 ## Features
 - **Authentication Management:** Handles access and refresh tokens, including automatic refreshing when expired.
-- **PKCE OAuth 2.0 Flow:** Full support for the secure PKCE authentication flow used by the official app.
+- **Email OTP Login:** Request an emailed Philips verification code and exchange it automatically for OAuth tokens.
+- **PKCE OAuth 2.0 Flow:** Full support for the secure PKCE exchange used after OTP login.
 - **Comprehensive API Coverage:** Methods to interact with user info, homes, devices, meals, events, and device settings.
 - **Home Management:** Create, rename, delete homes and manage home sharing invitations.
 - **Device Management:** Add, rename, delete devices and manage device settings.
@@ -18,6 +19,8 @@ The Unofficial PetsSeries API Client is a Python library designed to interact wi
 - **Food Dispenser Control:** Methods to control food dispensers (Requires Tuya).
 - **Event Parsing:** Automatically parses different event types into structured Python objects.
 - **Discovery Service:** Access global configuration and API URLs without authentication.
+- **Tuya Credential Retrieval:** Automatically fetch Tuya device credentials (localKey, deviceId) using Philips OAuth tokens.
+- **APK-compatible mobile API:** Uses the encrypted `thing.m.user.third.login` and `m.life.my.group.device.list` flow rather than the incompatible WebRTC endpoint.
 
 ## Features to be Added
 - **Camera Feed Access:** Methods to access the camera feed
@@ -36,7 +39,19 @@ pip install -r requirements.txt
 
 This client supports two methods of authentication with the PetsSeries API:
 
-### Method 1: PKCE OAuth Flow (Recommended)
+### Method 1: Email OTP Login (Recommended)
+
+The same login used by the Philips web/mobile client is available without an Android device:
+
+```python
+auth = AuthManager(token_file="tokens.json")
+await auth.request_email_code("you@example.com")
+tokens = await auth.login_with_email_code("you@example.com", input("Code: "))
+```
+
+The resulting access, refresh, and ID tokens are persisted and refreshes are serialized so a rotating refresh token is never spent concurrently.
+
+### Method 2: PKCE OAuth Flow
 
 The library includes full support for the PKCE (Proof Key for Code Exchange) OAuth 2.0 flow, which is the same method used by the official Philips app. This is more secure and doesn't require manually extracting tokens.
 
@@ -109,20 +124,64 @@ asyncio.run(main())
 
 After the first run, the tokens will be saved automatically, and you won't need to provide them again unless they are invalidated.
 
-## Tuya Integration (Optional)
+## Tuya Integration
 
-The client also supports integration with Tuya devices, which is required for controlling features such as food dispensers. To enable this, you will need to provide the following:
+The client controls Tuya-backed features (camera settings, feeding, sensors) over
+Tuya's mobile cloud API. Request signing and session-key derivation
+(`thing_security`) are **reimplemented in pure Python** (`petsseries.pure_signer`)
+— HMAC-SHA256/SHA256 over the app's bundled application credentials. There is **no
+external signer service, no qemu, and no native library** required: cloud device
+calls (`get_cloud_device_status`, `publish_cloud_dps`, `get_cloud_device_definition`,
+…) work with just your Philips login.
 
-- client_id: This can be found in the PetsSeries app's device screen.
+> Advanced: to override the signer (e.g. for a different Tuya app), set the
+> `PETSERIES_TUYA_SIGNER` environment variable to an external signer command or
+> HTTP service. This is not needed for normal use.
 
-- ip: The ip of the device.
+### Local (LAN) control — optional
 
-- local_key: You can extract this from the device using a rooted phone and running frida-trace as shown below:
-    
-```bash 
-frida-trace -H 127.0.0.1:27042 --decorate -j '*!*encodeString*'  -f com.versuni.petsseries. -o <a folder location to save frida_trace outputs to a local file>
+Direct-LAN control via TinyTuya is also supported but **not required** (the cloud
+path above covers the same features). It needs the device's local key: 
+
+### Automatic Credential Retrieval (NEW)
+
+You can now automatically retrieve Tuya device credentials (localKey, deviceId, IP) using your Philips OAuth tokens:
+
+```python
+import asyncio
+from petsseries import get_tuya_credentials_from_philips, PetsSeriesClient
+
+async def get_tuya_credentials():
+    # Method 1: Using existing PetsSeriesClient
+    async with PetsSeriesClient() as client:
+        await client.initialize()
+        
+        credentials, error = await get_tuya_credentials_from_philips(
+            client.auth.id_token,
+            country_code="1",  # your country dial code (1=US, 44=UK, 31=NL, ...)
+            region="eu"         # Options: eu, us, cn, in
+        )
+        
+        if error:
+            print(f"Error: {error}")
+            return
+            
+        for device in credentials:
+            print(f"Device: {device['name']}")
+            print(f"  Device ID: {device['device_id']}")
+            print(f"  Local Key: {device['local_key']}")
+            print(f"  IP: {device['ip'] or 'Not available'}")
+
+asyncio.run(get_tuya_credentials())
 ```
-Then, search for the localKey in the logs.
+
+### Manual Credential Entry
+
+If automatic retrieval doesn't work, you can still manually provide the credentials:
+
+- client_id: The device ID (available via automatic retrieval above)
+- ip: The IP address of the device on your local network
+- local_key: The encryption key (available via automatic retrieval above)
 
 
 ### Example Initialization with Tokens and Tuya Credentials
@@ -185,8 +244,8 @@ for home in homes:
 from datetime import datetime
 from pytz import timezone
 
-from_date = datetime(2024, 9, 27, tzinfo=timezone("Europe/Amsterdam"))
-to_date = datetime(2024, 9, 28, tzinfo=timezone("Europe/Amsterdam"))
+from_date = datetime(2024, 9, 27, tzinfo=timezone("UTC"))
+to_date = datetime(2024, 9, 28, tzinfo=timezone("UTC"))
 
 events = await client.get_events(home, from_date, to_date)
 for event in events:

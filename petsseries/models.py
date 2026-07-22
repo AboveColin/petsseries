@@ -127,6 +127,10 @@ class Device:
     url: str = ""
     settings_url: str = ""
     subscription_url: Optional[str] = None
+    # Tuya OTA component versions. The mobile app labels type 9 as MCU and
+    # type 0 as WiFi; API responses may omit either component.
+    mcu_version: Optional[str] = None
+    wifi_version: Optional[str] = None
 
     def get_device_id(self) -> str:
         """Retrieve the device's unique identifier."""

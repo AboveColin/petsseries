@@ -6,7 +6,7 @@ from setuptools import setup
 
 setup(
     name="petsseries",
-    version="0.3.0",
+    version="1.0.0",
     description="A Unofficial Python client for interacting with the Philips Pets Series API",
     author="AboveColin",
     author_email="colin@cdevries.dev",
@@ -18,6 +18,7 @@ setup(
         "PyJWT",
         "tinytuya",
         "cryptography",
+        "tuya-mobile>=1.0.0",
     ],
     python_requires=">=3.11",
     url="https://github.com/abovecolin/petsseries",

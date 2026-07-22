@@ -4,6 +4,8 @@ PetsSeriesClient module.
 
 from .api import PetsSeriesClient
 from .auth import AuthError, AuthManager
+from .native_signer import NativeSignerError, NativeTuyaSigner
+from .tuya_mobile import TuyaMobileClient
 from .devices import DevicesManager
 from .discovery import DiscoveryManager, get_discovery_config
 from .exceptions import (
@@ -34,6 +36,13 @@ from .models import (
     ModeDevice,
     User,
 )
+from .tuya_cloud import TuyaCloudClient, get_tuya_credentials_from_philips
+from .enhanced_credentials import (
+    get_complete_device_credentials,
+    get_device_info_from_philips,
+    save_credentials_to_file,
+    format_credentials_for_display
+)
 
 __all__ = [
     # Main client
@@ -41,6 +50,9 @@ __all__ = [
     # Auth
     "AuthManager",
     "AuthError",
+    "NativeTuyaSigner",
+    "NativeSignerError",
+    "TuyaMobileClient",
     # Exceptions
     "PetsSeriesError",
     "PetsSeriesAPIError",
@@ -53,6 +65,14 @@ __all__ = [
     "DevicesManager",
     "DiscoveryManager",
     "get_discovery_config",
+    # Tuya Cloud
+    "TuyaCloudClient",
+    "get_tuya_credentials_from_philips",
+    # Enhanced Credentials
+    "get_complete_device_credentials",
+    "get_device_info_from_philips",
+    "save_credentials_to_file",
+    "format_credentials_for_display",
     # Models
     "Home",
     "Device",
