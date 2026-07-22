@@ -4,3 +4,4 @@ certifi
 PyJWT
 setuptools
 tinytuya
+tuya-mobile
