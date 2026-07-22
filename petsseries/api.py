@@ -5,32 +5,43 @@ This module provides the PetsSeriesClient class, which handles authentication,
 data retrieval, and device management for the PetsSeries application.
 """
 
+import asyncio
+import hashlib
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
-import aiohttp
+import aiohttp  # type: ignore[import-not-found]
 
 from .auth import AuthManager
-from .models import (
-    User,
-    Home,
-    Device,
-    Consumer,
-    ModeDevice,
-)
 from .config import Config
-from .session import create_ssl_context
+from .constants import DeviceConstants, HTTPStatus, Timeouts, UserAgents
+from .decorators import handle_api_errors, validate_device_id, validate_local_key
+from .devices import DevicesManager
+from .discovery import DiscoveryManager
+from .events import EventsManager
+from .exceptions import PetsSeriesValidationError
+from .homes import HomesManager
 
 # Import MealsManager
 from .meals import MealsManager
-from .events import EventsManager
+from .models import (
+    Consumer,
+    Device,
+    Home,
+    ModeDevice,
+    User,
+)
+from .session import create_ssl_context
+from .tuya_cloud import get_tuya_credentials_from_philips, tuya_mobile_action_from_philips
+from .tuya_mobile import TuyaMobileClient
+from .native_signer import NativeTuyaSigner
 
-# Optional import for Tuya
+# Optional import for Tuya local control
 try:
     from .tuya import TuyaClient, TuyaError
 except ImportError:
-    TuyaClient = None
-    TuyaError = Exception
+    TuyaClient = None  # type: ignore[assignment, misc]
+    TuyaError = Exception  # type: ignore[assignment, misc]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,16 +61,33 @@ class PetsSeriesClient:
         access_token=None,
         refresh_token=None,
         tuya_credentials: Optional[Dict[str, str]] = None,
+        token_save_callback: Optional[Callable] = None,
+        id_token=None,
     ):
-        self.auth = AuthManager(token_file, access_token, refresh_token)
-        self.session = None
-        self.headers = {}
-        self.headers_token = {}
-        self.timeout = aiohttp.ClientTimeout(total=10.0)
+        self.auth = AuthManager(
+            token_file, access_token, refresh_token, save_callback=token_save_callback
+        )
+        self.auth.id_token = id_token
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.headers: Dict[str, str] = {}
+        self.headers_token: Dict[str, str] = {}
+        self.timeout = aiohttp.ClientTimeout(total=Timeouts.REQUEST)
         self.config = Config()
         self.tuya_client: Optional[TuyaClient] = None  # type: ignore
+        self.tuya_device_credentials: list = []  # List of device credentials (manually set)
+        # Cached Tuya mobile session, reused across cloud calls. Re-logging in on
+        # every call trips Tuya's daily login cap (USER_SESSION_LIMIT), so we log
+        # in once and reuse the session until it expires.
+        self._tuya_mobile: Optional[TuyaMobileClient] = None
+        self._tuya_mobile_session: Optional[aiohttp.ClientSession] = None
+        self._tuya_lock = asyncio.Lock()
+
+        # Initialize managers
         self.meals = MealsManager(self)
         self.events = EventsManager(self)
+        self.homes_manager = HomesManager(self)
+        self.devices_manager = DevicesManager(self)
+        self.discovery_manager = DiscoveryManager(self.session)
 
         if tuya_credentials:
             if TuyaClient is None:
@@ -74,7 +102,11 @@ class PetsSeriesClient:
                     client_id=tuya_credentials["client_id"],
                     ip=tuya_credentials["ip"],
                     local_key=tuya_credentials["local_key"],
-                    version=tuya_credentials.get("version", 3.4),
+                    version=float(
+                        tuya_credentials.get(
+                            "version", DeviceConstants.DEFAULT_TUYA_VERSION
+                        )
+                    ),
                 )
                 _LOGGER.info("TuyaClient initialized successfully.")
             except TuyaError as e:
@@ -95,6 +127,7 @@ class PetsSeriesClient:
                 timeout=self.timeout, connector=connector
             )
             _LOGGER.debug("aiohttp.ClientSession initialized with certifi CA bundle.")
+        assert self.session is not None
         return self.session
 
     async def initialize(self) -> None:
@@ -102,7 +135,9 @@ class PetsSeriesClient:
         Initialize the client by loading tokens and refreshing the access token if necessary.
         """
         if self.auth.access_token and self.auth.refresh_token:
-            await self.auth.save_tokens(str(self.auth.access_token), str(self.auth.refresh_token))
+            await self.auth.save_tokens(
+                str(self.auth.access_token), str(self.auth.refresh_token)
+            )
         await self.auth.load_tokens()
         if await self.auth.is_token_expired():
             _LOGGER.info("Access token expired, refreshing...")
@@ -118,7 +153,7 @@ class PetsSeriesClient:
             "Accept-Encoding": "gzip",
             "Authorization": f"Bearer {access_token}",
             "Connection": "keep-alive",
-            "User-Agent": "UnofficialPetsSeriesClient/1.0",
+            "User-Agent": UserAgents.CLIENT,
         }
         self.headers_token = {
             "Accept-Encoding": "gzip",
@@ -126,7 +161,7 @@ class PetsSeriesClient:
             "Connection": "keep-alive",
             "Host": "cdc.accounts.home.id",
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14)",
+            "User-Agent": UserAgents.TOKEN,
         }
         _LOGGER.debug("Headers refreshed successfully.")
 
@@ -138,7 +173,137 @@ class PetsSeriesClient:
             await self.session.close()
             self.session = None
             _LOGGER.debug("aiohttp.ClientSession closed.")
+        if self._tuya_mobile_session:
+            await self._tuya_mobile_session.close()
+            self._tuya_mobile_session = None
+            self._tuya_mobile = None
         await self.auth.close()
+
+    def _find_device_credential(self, device_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Find a device credential by device_id.
+
+        Args:
+            device_id: The Tuya device ID to search for.
+
+        Returns:
+            The device credential dictionary if found, None otherwise.
+        """
+        for device in self.tuya_device_credentials:
+            if device.get("device_id") == device_id:
+                return device
+        return None
+
+    def get_device_credentials(
+        self, device_id: Optional[str] = None
+    ) -> Union[List[Dict[str, Any]], Dict[str, Any], None]:
+        """
+        Get Tuya credentials for a specific device or all devices.
+
+        Args:
+            device_id: Optional device ID to filter by. If None, returns all devices.
+
+        Returns:
+            If device_id is provided: A single device credential dict or None if not found.
+            If device_id is None: List of all device credentials.
+        """
+        if device_id is None:
+            return self.tuya_device_credentials
+
+        return self._find_device_credential(device_id)
+
+    @validate_device_id
+    def get_device_local_key(self, device_id: str) -> Optional[str]:
+        """
+        Get the local key for a specific device.
+
+        Args:
+            device_id: The Tuya device ID.
+
+        Returns:
+            The local key string or None if device not found.
+
+        Raises:
+            PetsSeriesValidationError: If device_id is invalid.
+        """
+        device = self._find_device_credential(device_id)
+        return device.get("local_key") if device else None
+
+    @validate_device_id
+    def get_device_ip(self, device_id: str) -> Optional[str]:
+        """
+        Get the local IP address for a specific device.
+
+        Args:
+            device_id: The Tuya device ID.
+
+        Returns:
+            The IP address string or None if device not found or IP unavailable.
+
+        Raises:
+            PetsSeriesValidationError: If device_id is invalid.
+        """
+        device = self._find_device_credential(device_id)
+        return device.get("ip") if device else None
+
+    @validate_device_id
+    @validate_local_key
+    def set_device_credentials(
+        self,
+        device_id: str,
+        local_key: str,
+        ip: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> None:
+        """
+        Manually set device credentials (localKey, IP) for a device.
+
+        You can obtain the localKey through other means (e.g., from Tuya IoT Platform,
+        or the tinytuya wizard).
+
+        Args:
+            device_id: The Tuya device ID (same as vendor_id from Philips API).
+                       Must be a non-empty string.
+            local_key: The device's local encryption key. Must be a non-empty string.
+            ip: Optional local IP address of the device (e.g., "192.168.1.100").
+            name: Optional device name for easier identification.
+
+        Raises:
+            PetsSeriesValidationError: If device_id or local_key is invalid.
+
+        Example:
+            >>> client = PetsSeriesClient()
+            >>> await client.initialize()
+            >>> client.set_device_credentials(
+            ...     device_id="",
+            ...     local_key="",
+            ...     ip="192.168.1.100",
+            ...     name="Pet Feeder"
+            ... )
+        """
+        # Check if device already exists
+        device = self._find_device_credential(device_id)
+        if device:
+            device["local_key"] = local_key
+            if ip:
+                device["ip"] = ip
+            if name:
+                device["name"] = name
+            _LOGGER.info("Updated credentials for device %s", device_id)
+            return
+
+        # Add new device
+        new_device: Dict[str, Any] = {
+            "device_id": device_id,
+            "local_key": local_key,
+        }
+        if ip:
+            new_device["ip"] = ip
+        if name:
+            new_device["name"] = name
+
+        self.tuya_device_credentials.append(new_device)
+        _LOGGER.info("Added credentials for device %s", device_id)
 
     async def ensure_token_valid(self) -> None:
         """
@@ -149,157 +314,251 @@ class PetsSeriesClient:
             await self.auth.refresh_access_token()
             await self._refresh_headers()
 
+    @handle_api_errors("get user info")
     async def get_user_info(self) -> User:
         """
         Get user information from the UserInfo endpoint.
+
+        Returns:
+            User: User information object.
+
+        Raises:
+            PetsSeriesAPIError: If the API request fails.
+            PetsSeriesNetworkError: If a network error occurs.
         """
         await self.ensure_token_valid()
         session = await self.get_client()
-        try:
-            async with session.get(
-                self.config.user_info_url, headers=self.headers
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                return User(
-                    sub=data["sub"],
-                    name=data["name"],
-                    given_name=data["given_name"],
-                    picture=data.get("picture"),
-                    locale=data.get("locale"),
-                    email=data["email"],
-                )
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error("Failed to get user info: %s %s", e.status, e.message)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in get_user_info: %s", e)
-            raise
+        async with session.get(
+            self.config.user_info_url, headers=self.headers
+        ) as response:
+            response.raise_for_status()
+            data = await response.json()
+            return User(
+                sub=data["sub"],
+                name=data["name"],
+                given_name=data["given_name"],
+                picture=data.get("picture"),
+                locale=data.get("locale"),
+                email=data["email"],
+            )
 
+    @handle_api_errors("get consumer")
     async def get_consumer(self) -> Consumer:
         """
         Get Consumer information from the Consumer endpoint.
+
+        Returns:
+            Consumer: Consumer information object.
+
+        Raises:
+            PetsSeriesAPIError: If the API request fails.
+            PetsSeriesNetworkError: If a network error occurs.
         """
         await self.ensure_token_valid()
         session = await self.get_client()
-        try:
-            async with session.get(
-                self.config.consumer_url, headers=self.headers
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                return Consumer(
-                    id=data["id"], country_code=data["countryCode"], url=data["url"]
-                )
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error("Failed to get Consumer: %s %s", e.status, e.message)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in get_consumer: %s", e)
-            raise
+        async with session.get(
+            self.config.consumer_url, headers=self.headers
+        ) as response:
+            response.raise_for_status()
+            data = await response.json()
+            # New consumer endpoint returns additional fields
+            consumer = Consumer(
+                id=str(data.get("id", "")),
+                country_code=str(data.get("countryCode", "")),
+                url=str(data.get("url", "")),
+            )
+            consumer.language = data.get("language")
+            consumer.identities = data.get("identities")
+            consumer.identities_url = data.get("identitiesUrl")
+            consumer.installations = data.get("installations")
+            consumer.installations_url = data.get("installationsUrl")
+            return consumer
 
+    @handle_api_errors("get homes")
     async def get_homes(self) -> list[Home]:
         """
         Get available homes for the user.
+
+        Returns:
+            list[Home]: List of Home objects.
+
+        Raises:
+            PetsSeriesAPIError: If the API request fails.
+            PetsSeriesNetworkError: If a network error occurs.
         """
         await self.ensure_token_valid()
         session = await self.get_client()
-        try:
-            async with session.get(
-                self.config.homes_url, headers=self.headers
-            ) as response:
-                response.raise_for_status()
-                homes_data = await response.json()
-                homes = [
-                    Home(
-                        id=home["id"],
-                        name=home["name"],
-                        shared=home["shared"],
-                        number_of_devices=home["numberOfDevices"],
-                        external_id=home["externalId"],
-                        number_of_activities=home["numberOfActivities"],
-                    )
-                    for home in homes_data
-                ]
-                return homes
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error("Failed to get homes: %s %s", e.status, e.message)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in get_homes: %s", e)
-            raise
+        async with session.get(self.config.homes_url, headers=self.headers) as response:
+            response.raise_for_status()
+            homes_data = await response.json()
+            items = homes_data.get(
+                "item", homes_data if isinstance(homes_data, list) else []
+            )
+            homes: list[Home] = []
+            for h in items:
+                home = Home(
+                    id=str(h.get("id", "")),
+                    name=str(h.get("name", "")),
+                    shared=bool(h.get("shared", False)),
+                    number_of_devices=int(h.get("numberOfDevices", 0)),
+                    external_id=str(h.get("externalId", "")),
+                    number_of_activities=int(h.get("numberOfActivities", 0)),
+                )
+                home.url = str(h.get("url", home.url))
+                home.devices_url = str(h.get("devicesUrl", home.devices_url))
+                home.events_url = str(h.get("eventsUrl", home.events_url))
+                home.invites_url = str(h.get("invitesUrl", home.invites_url))
+                home.time_zone = h.get("timeZone", home.time_zone)
+                home.active_mode = h.get("activeMode", home.active_mode)
+                home.modes = h.get("modes", home.modes)
+                home.members = h.get("members", home.members)
+                home.vendor_ids = h.get("vendorIds", home.vendor_ids)
+                homes.append(home)
+            return homes
 
+    @handle_api_errors("get devices")
     async def get_devices(self, home: Home) -> list[Device]:
         """
         Get devices for the selected home.
+
+        Args:
+            home: The Home object to get devices for.
+
+        Returns:
+            list[Device]: List of Device objects.
+
+        Raises:
+            PetsSeriesAPIError: If the API request fails.
+            PetsSeriesNetworkError: If a network error occurs.
         """
         await self.ensure_token_valid()
-        url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/devices"
-        )
+        url = f"{self.config.base_url}/api/homes/{home.id}/devices"
         session = await self.get_client()
-        try:
-            async with session.get(url, headers=self.headers) as response:
-                response.raise_for_status()
-                devices_data = await response.json()
-                devices = [
-                    Device(
-                        id=device["id"],
-                        name=device["name"],
-                        product_ctn=device["productCtn"],
-                        product_id=device["productId"],
-                        external_id=device["externalId"],
-                        url=device["url"],
-                        settings_url=device["settingsUrl"],
-                        subscription_url=device["subscriptionUrl"],
-                    )
-                    for device in devices_data.get("item", [])
-                ]
-                return devices
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error("Failed to get devices: %s %s", e.status, e.message)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in get_devices: %s", e)
-            raise
+        async with session.get(url, headers=self.headers) as response:
+            response.raise_for_status()
+            devices_data = await response.json()
+            devices: list[Device] = []
+            for d in devices_data.get("item", []):
+                # Philips/Tuya releases have used several names for the OTA
+                # component versions. Preserve all common spellings without
+                # making the public model depend on one response revision.
+                mcu_version = d.get("mcuVersion") or d.get("mcu_version")
+                wifi_version = d.get("wifiVersion") or d.get("wifi_version")
+                firmware = d.get("firmware") if isinstance(d.get("firmware"), dict) else {}
+                ota = d.get("ota") if isinstance(d.get("ota"), dict) else {}
+                mcu_version = mcu_version or firmware.get("mcuVersion") or firmware.get("mcu")
+                wifi_version = wifi_version or firmware.get("wifiVersion") or firmware.get("wifi")
+                mcu_version = mcu_version or ota.get("mcuVersion") or ota.get("mcu")
+                wifi_version = wifi_version or ota.get("wifiVersion") or ota.get("wifi")
+                device = Device(
+                    id=str(d.get("id", "")),
+                    name=str(d.get("name", "")),
+                    product_ctn=d.get("productCtn"),
+                    product_id=d.get("productId"),
+                    vendor_id=d.get("vendorId"),
+                    external_id=d.get("externalId"),
+                    url=str(d.get("url", "")),
+                    settings_url=str(d.get("settingsUrl", "")),
+                    subscription_url=d.get("subscriptionUrl"),
+                    mcu_version=str(mcu_version) if mcu_version is not None else None,
+                    wifi_version=str(wifi_version) if wifi_version is not None else None,
+                )
+                devices.append(device)
+            return devices
 
+    async def get_cloud_device_credentials(
+        self, homes: Optional[List[Home]] = None, country_code: str = "1", region: str = "eu"
+    ) -> List[Dict[str, Any]]:
+        """Retrieve local Tuya credentials using the authenticated Philips login.
+
+        Philips' WebRTC credential endpoint returns the local key; no mobile
+        device session is required. Failures are surfaced as an empty
+        list so callers can keep cloud-only functionality working.
+        """
+        if not self.auth.id_token:
+            return []
+        homes = homes if homes is not None else await self.get_homes()
+        device_ids: List[str] = []
+        for home in homes:
+            for device in await self.get_devices(home):
+                if device.vendor_id:
+                    device_ids.append(str(device.vendor_id))
+        if not device_ids:
+            return []
+        credentials, error = await get_tuya_credentials_from_philips(
+            self.auth.id_token,
+            device_ids,
+            country_code=country_code,
+            region=region,
+        )
+        if error:
+            _LOGGER.warning("Unable to retrieve Tuya credentials from Philips: %s", error)
+        return credentials
+
+    def configure_tuya_credentials(self, credentials: Dict[str, Any]) -> bool:
+        """Attach a local Tuya client from credentials returned by Philips."""
+        if TuyaClient is None:
+            return False
+        required = (credentials.get("device_id"), credentials.get("local_key"), credentials.get("ip"))
+        if not all(required):
+            return False
+        self.tuya_client = TuyaClient(
+            client_id=str(credentials["device_id"]),
+            ip=str(credentials["ip"]),
+            local_key=str(credentials["local_key"]),
+            version=float(credentials.get("version", DeviceConstants.DEFAULT_TUYA_VERSION)),
+        )
+        return True
+
+    @handle_api_errors("get mode devices")
     async def get_mode_devices(self, home: Home) -> list[ModeDevice]:
         """
         Get mode devices for the selected home.
+
+        Args:
+            home: The Home object to get mode devices for.
+
+        Returns:
+            list[ModeDevice]: List of ModeDevice objects.
+
+        Raises:
+            PetsSeriesAPIError: If the API request fails.
+            PetsSeriesNetworkError: If a network error occurs.
         """
         await self.ensure_token_valid()
-        url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/modes/home/devices"
-        )
+        url = f"{self.config.base_url}/api/homes/{home.id}/modes/home/devices"
         session = await self.get_client()
-        try:
-            async with session.get(url, headers=self.headers) as response:
-                response.raise_for_status()
-                mode_devices_data = await response.json()
-                mode_devices = [
-                    ModeDevice(id=md["id"], name=md["name"], settings=md["settings"])
-                    for md in mode_devices_data.get("item", [])
-                ]
-                return mode_devices
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error("Failed to get mode devices: %s %s", e.status, e.message)
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in get_mode_devices: %s", e)
-            raise
+        async with session.get(url, headers=self.headers) as response:
+            response.raise_for_status()
+            mode_devices_data = await response.json()
+            mode_devices = [
+                ModeDevice(id=md["id"], name=md["name"], settings=md["settings"])
+                for md in mode_devices_data.get("item", [])
+            ]
+            return mode_devices
 
+    @handle_api_errors("update device settings")
     async def update_device_settings(
         self, home: Home, device_id: str, settings: dict
     ) -> bool:
         """
         Update the settings for a device.
+
+        Args:
+            home: The Home object containing the device.
+            device_id: The device ID to update.
+            settings: Dictionary of settings to update.
+
+        Returns:
+            bool: True if update was successful (HTTP 204), False otherwise.
+
+        Raises:
+            PetsSeriesAPIError: If the API request fails.
+            PetsSeriesNetworkError: If a network error occurs.
         """
         await self.ensure_token_valid()
         url = (
-            f"https://petsseries-backend.prod.eu-hs.iot.versuni.com/"
-            f"api/homes/{home.id}/modes/home/devices/{device_id}"
+            f"{self.config.base_url}/api/homes/{home.id}/modes/home/devices/{device_id}"
         )
 
         headers = {
@@ -309,28 +568,32 @@ class PetsSeriesClient:
 
         payload = {"settings": settings}
         session = await self.get_client()
-        try:
-            async with session.patch(url, headers=headers, json=payload) as response:
-                if response.status == 204:
-                    _LOGGER.info("Device %s settings updated successfully.", device_id)
-                    return True
+        async with session.patch(url, headers=headers, json=payload) as response:
+            if response.status == HTTPStatus.NO_CONTENT:
+                _LOGGER.info("Device %s settings updated successfully.", device_id)
+                return True
 
-                text = await response.text()
-                _LOGGER.error("Failed to update device settings: %s", text)
-                response.raise_for_status()
-        except aiohttp.ClientResponseError as e:
-            _LOGGER.error(
-                "Failed to update device settings: %s %s", e.status, e.message
-            )
-            raise
-        except Exception as e:
-            _LOGGER.error("Unexpected error in update_device_settings: %s", e)
-            raise
+            text = await response.text()
+            _LOGGER.error("Failed to update device settings: %s", text)
+            response.raise_for_status()
         return False
 
+    @handle_api_errors("get device settings")
     async def get_settings(self, home: Home, device_id: str) -> dict:
         """
         Get the settings for a device.
+
+        Args:
+            home: The Home object containing the device.
+            device_id: The device ID to get settings for.
+
+        Returns:
+            dict: Simplified settings dictionary.
+
+        Raises:
+            PetsSeriesValidationError: If device is not found.
+            PetsSeriesAPIError: If the API request fails.
+            PetsSeriesNetworkError: If a network error occurs.
         """
         mode_devices = await self.get_mode_devices(home)
         for md in mode_devices:
@@ -345,7 +608,7 @@ class PetsSeriesClient:
                 )
                 return simplified_settings
         _LOGGER.warning("No settings found for device %s", device_id)
-        raise ValueError(f"Device with ID {device_id} not found")
+        raise PetsSeriesValidationError(f"Device with ID {device_id} not found")
 
     async def power_off_device(self, home: Home, device_id: str) -> bool:
         """
@@ -386,11 +649,22 @@ class PetsSeriesClient:
     async def toggle_motion_notifications(self, home: Home, device_id: str) -> bool:
         """
         Toggle motion notifications for a device.
+
+        Args:
+            home: The Home object containing the device.
+            device_id: The device ID to toggle notifications for.
+
+        Returns:
+            bool: True if successful, False if device not found.
+
+        Raises:
+            PetsSeriesAPIError: If the API request fails.
+            PetsSeriesNetworkError: If a network error occurs.
         """
         try:
             current_settings = await self.get_settings(home, device_id)
-        except ValueError as e:
-            _LOGGER.error(e)
+        except PetsSeriesValidationError as e:
+            _LOGGER.error("Device not found: %s", e)
             return False
         new_value = not current_settings.get("push_notification_motion", False)
         _LOGGER.info(
@@ -403,11 +677,22 @@ class PetsSeriesClient:
     async def toggle_device_power(self, home: Home, device_id: str) -> bool:
         """
         Toggle the power state of a device.
+
+        Args:
+            home: The Home object containing the device.
+            device_id: The device ID to toggle power for.
+
+        Returns:
+            bool: True if successful, False if device not found.
+
+        Raises:
+            PetsSeriesAPIError: If the API request fails.
+            PetsSeriesNetworkError: If a network error occurs.
         """
         try:
             current_settings = await self.get_settings(home, device_id)
-        except ValueError as e:
-            _LOGGER.error(e)
+        except PetsSeriesValidationError as e:
+            _LOGGER.error("Device not found: %s", e)
             return False
         new_value = not current_settings.get("device_active", False)
         _LOGGER.info("Toggling power for device %s to %s", device_id, new_value)
@@ -461,6 +746,177 @@ class PetsSeriesClient:
         else:
             _LOGGER.warning("TuyaClient is not initialized.")
             return False
+
+    async def _tuya_action(
+        self,
+        action: str,
+        payload: Dict[str, Any],
+        *,
+        version: str = "1.0",
+        country_code: str = "1",
+    ) -> Dict[str, Any]:
+        """Call a Tuya mobile action reusing one cached, logged-in session.
+
+        Logging in on every call trips Tuya's daily login cap
+        (USER_SESSION_LIMIT), so we keep a single session and only re-login when
+        it is missing or has expired. A login is never retried on a rate-limit
+        error, which would only make it worse.
+        """
+        if not self.auth.id_token:
+            return {}
+        async with self._tuya_lock:
+            if self._tuya_mobile is None:
+                await self._tuya_login(country_code)
+            try:
+                return await self._tuya_mobile._call(action, payload, version=version)
+            except Exception as err:  # noqa: BLE001 - inspect message to decide retry
+                message = str(err)
+                if "LIMIT" in message.upper():
+                    raise
+                # Likely an expired session: re-login once and retry.
+                _LOGGER.debug("Tuya action %s failed (%s); re-logging in once", action, message)
+                await self._tuya_login(country_code, force=True)
+                return await self._tuya_mobile._call(action, payload, version=version)
+
+    async def _tuya_login(self, country_code: str = "1", *, force: bool = False) -> None:
+        """(Re)establish the cached Tuya mobile session from the Philips token."""
+        if force and self._tuya_mobile_session is not None:
+            await self._tuya_mobile_session.close()
+            self._tuya_mobile = None
+            self._tuya_mobile_session = None
+        # Make sure the Philips id_token is current before the (rare) login.
+        await self.ensure_token_valid()
+        signer = NativeTuyaSigner.from_environment()
+        self._tuya_mobile_session = aiohttp.ClientSession()
+        self._tuya_mobile = TuyaMobileClient(signer, self._tuya_mobile_session)
+        await self._tuya_mobile.login_with_philips_token(self.auth.id_token, country_code)
+
+    async def get_cloud_device_status(self, device_id: str) -> Dict[str, Any]:
+        """Read device DPs through the Philips/Tuya cloud channel."""
+        if not self.auth.id_token:
+            return {}
+        result = await self._tuya_action(
+            "s.m.dev.dp.get", {"devId": device_id, "gwId": device_id}
+        )
+        if isinstance(result, dict) and isinstance(result.get("result"), dict):
+            nested = result["result"]
+            return nested.get("dps", nested)
+        return result if isinstance(result, dict) else {}
+
+    async def get_cloud_device_definition(self, device_id: str) -> Dict[str, Any]:
+        """Read the Tuya device metadata and DP schema without changing state."""
+        if not self.auth.id_token:
+            return {}
+        result = await self._tuya_action("thing.m.device.get", {"devId": device_id})
+        if isinstance(result, dict) and isinstance(result.get("result"), dict):
+            return result["result"]
+        return result if isinstance(result, dict) else {}
+
+    async def get_cloud_webrtc_config(self, device_id: str) -> Dict[str, Any]:
+        """Read the live Tuya WebRTC/P2P signaling config for a camera.
+
+        Uses ``thing.m.ipc.rtc.config.get``, the read-only mobile endpoint the
+        app calls before opening a stream.  Returns the signaling parameters a
+        WebRTC->RTSP bridge needs (``motoId``, ``auth``, ``p2pConfig`` with the
+        current STUN/TURN ICE servers, ``skill``, ``supportsWebrtc``).  These
+        rotate periodically (note the ``expire`` in ``p2pConfig``), so they must
+        be fetched fresh rather than hardcoded.  Contains credential material;
+        never log or expose it as an entity state.
+        """
+        if not self.auth.id_token:
+            return {}
+        result = await self._tuya_action("thing.m.ipc.rtc.config.get", {"devId": device_id})
+        if isinstance(result, dict) and isinstance(result.get("result"), dict):
+            return result["result"]
+        return result if isinstance(result, dict) else {}
+
+    async def get_cloud_firmware_info(self, device_id: str) -> list[Dict[str, Any]]:
+        """Read Tuya OTA metadata without starting an update.
+
+        The mobile SDK uses ``thing.m.device.upgrade.info`` v1.2.  The
+        response contains UpgradeInfoBean records, including type, version,
+        currentVersion, upgradeStatus and (only when authorized/available)
+        the signed package metadata.
+        """
+        if not self.auth.id_token:
+            return []
+        result = await self._tuya_action(
+            "thing.m.device.upgrade.info", {"devId": device_id}, version="1.2"
+        )
+        if isinstance(result, dict):
+            value = result.get("result", result)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+            if isinstance(value, dict):
+                for key in ("list", "data", "upgradeInfo"):
+                    if isinstance(value.get(key), list):
+                        return [item for item in value[key] if isinstance(item, dict)]
+        return []
+
+    async def get_product_firmware_info(
+        self, product_key: str, device_id: str
+    ) -> list[Dict[str, Any]]:
+        """Read product-level OTA metadata through the mobile SDK endpoint."""
+        if not self.auth.id_token or not product_key:
+            return []
+        result = await self._tuya_action(
+            "s.m.upgrade.info",
+            {"productKey": product_key, "devId": device_id},
+            version="2.0",
+        )
+        if isinstance(result, dict):
+            value = result.get("result", result)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+            if isinstance(value, dict):
+                for key in ("list", "data", "upgradeInfo"):
+                    if isinstance(value.get(key), list):
+                        return [item for item in value[key] if isinstance(item, dict)]
+        return []
+
+    async def download_firmware_package(
+        self, upgrade: Dict[str, Any], destination: str, *, max_bytes: int = 512 * 1024 * 1024
+    ) -> str:
+        """Download an OTA artifact for offline inspection; never install it."""
+        url = upgrade.get("url")
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise ValueError("OTA record does not contain an HTTPS download URL")
+        expected_size = int(upgrade.get("fileSize") or 0)
+        if expected_size and expected_size > max_bytes:
+            raise ValueError("OTA artifact exceeds the configured size limit")
+        session = await self.get_client()
+        digest = hashlib.md5()
+        total = 0
+        with open(destination, "wb") as output:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                async for chunk in response.content.iter_chunked(1024 * 1024):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise ValueError("OTA artifact exceeds the configured size limit")
+                    output.write(chunk)
+                    digest.update(chunk)
+        if expected_size and total != expected_size:
+            raise ValueError(f"OTA size mismatch: expected {expected_size}, got {total}")
+        expected_md5 = str(upgrade.get("md5") or "").lower()
+        if expected_md5 and digest.hexdigest().lower() != expected_md5:
+            raise ValueError("OTA MD5 verification failed")
+        return destination
+
+    async def publish_cloud_dps(self, device_id: str, dps: Dict[str, Any]) -> bool:
+        """Write device DPs through the Philips/Tuya cloud channel."""
+        if not self.auth.id_token:
+            return False
+        result = await self._tuya_action(
+            "thing.m.device.dp.publish",
+            {"devId": device_id, "gwId": device_id, "dps": __import__("json").dumps(dps, separators=(",", ":"))},
+        )
+        if result.get("success") is False or result.get("errorCode") or result.get("errorMsg"):
+            raise RuntimeError(
+                "Tuya DP publish failed: "
+                f"{result.get('errorCode') or 'unknown'} {result.get('errorMsg') or ''}".strip()
+            )
+        return True
 
     def toggle_tuya_switch(self, dp_code: str) -> bool:
         """
