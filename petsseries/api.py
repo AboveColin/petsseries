@@ -333,13 +333,17 @@ class PetsSeriesClient:
         ) as response:
             response.raise_for_status()
             data = await response.json()
+            # Only `sub` is guaranteed by OIDC. CDC omits `name` when the
+            # profile has no name at all, and omits `given_name` when only a
+            # last name is set, so indexing either one turns a working account
+            # into a KeyError that surfaces as a login failure.
             return User(
                 sub=data["sub"],
-                name=data["name"],
-                given_name=data["given_name"],
+                name=data.get("name"),
+                given_name=data.get("given_name"),
                 picture=data.get("picture"),
                 locale=data.get("locale"),
-                email=data["email"],
+                email=data.get("email"),
             )
 
     @handle_api_errors("get consumer")
