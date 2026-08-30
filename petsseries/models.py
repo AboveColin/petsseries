@@ -17,19 +17,19 @@ class User:
 
     Attributes:
         sub (str): Subject identifier.
-        name (str): Full name of the user.
-        given_name (str): Given name of the user.
+        name (Optional[str]): Full name of the user, absent on a nameless profile.
+        given_name (Optional[str]): Given name, absent when only a last name is set.
         picture (Optional[str]): URL to the user's picture.
         locale (Optional[str]): Locale of the user.
-        email (str): Email address of the user.
+        email (Optional[str]): Email address of the user.
     """
 
     sub: str
-    name: str
-    given_name: str
+    name: Optional[str]
+    given_name: Optional[str]
     picture: Optional[str]
     locale: Optional[str]
-    email: str
+    email: Optional[str]
 
 
 @dataclass
