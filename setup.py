@@ -11,6 +11,10 @@ setup(
     author="AboveColin",
     author_email="colin@cdevries.dev",
     packages=["petsseries"],
+    license="MIT",
+    extras_require={
+        "test": ["pytest>=8", "pytest-asyncio>=1.0", "pytest-cov"],
+    },
     install_requires=[
         "aiohttp",
         "aiofiles",
@@ -23,6 +27,7 @@ setup(
     python_requires=">=3.11",
     url="https://github.com/abovecolin/petsseries",
     classifiers=[
+        "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
     ],

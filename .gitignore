@@ -1,16 +1,18 @@
-# Runtime credentials / state — never commit
-tokens.json
-philips_tokens*.json
-*.tokens.json
-.storage/
 
-# Python
 __pycache__/
-*.py[cod]
-*.egg-info/
-build/
-dist/
+.coverage
 .mypy_cache/
 .pytest_cache/
+.storage/
 .venv/
+*.egg-info/
+*.py[cod]
+*.tokens.json
+# Python
+# Runtime credentials / state — never commit
+build/
+dist/
+philips_tokens*.json
+tokens.json
+uv.lock
 venv/

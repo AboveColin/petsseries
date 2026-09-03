@@ -1,41 +1,63 @@
-# This workflow will upload a Python Package using Twine when a release is created
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python#publishing-to-package-registries
-
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
+# Publishes to PyPI with trusted publishing (OIDC). No API token is stored in
+# this repository. Configure the publisher once, per project, at
+# https://pypi.org/manage/project/<name>/settings/publishing/
 name: Upload Python Package
 
 on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      preflight_only:
+        description: Check the PyPI trusted publisher, then stop without uploading
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
-  deploy:
-
+  publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
-    - uses: actions/checkout@v7
-    - name: Set up Python
-      uses: actions/setup-python@v7
-      with:
-        python-version: '3.x'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install build
-    - name: Build package
-      run: python -m build
-    - name: Publish package
-      uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247
-      with:
-        user: __token__
-        password: ${{ secrets.PYPI_API_TOKEN }}
-        skip-existing: true
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Build the distributions
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      # A missing trusted publisher otherwise shows up only during a release,
+      # which is the one moment nobody can fix it. Ask PyPI first, and fail
+      # with the URL that fixes it.
+      - name: Check that PyPI accepts this repository as a publisher
+        run: |
+          set -euo pipefail
+          oidc=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=pypi" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')
+          code=$(curl -sS -o mint-response.json -w '%{http_code}' \
+            -X POST https://pypi.org/_/oidc/mint-token \
+            --data "$(python3 -c 'import json,sys; print(json.dumps({"token": sys.argv[1]}))' "$oidc")")
+          if [ "$code" != "200" ]; then
+            echo "::error::PyPI refused to mint a publishing token (HTTP $code)."
+            echo "::error::Add a trusted publisher for this project at https://pypi.org/manage/projects/"
+            echo "::error::Owner AboveColin, repository ${GITHUB_REPOSITORY#*/}, workflow python-publish.yml"
+            cat mint-response.json
+            rm -f mint-response.json
+            exit 1
+          fi
+          rm -f mint-response.json
+          echo "PyPI accepts this repository as a publisher."
+
+      - name: Publish the distributions
+        if: ${{ github.event_name == 'release' || !inputs.preflight_only }}
+        uses: pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26  # v1.14.2
