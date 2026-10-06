@@ -740,4 +740,11 @@ These Tuya methods enhance the functionality of the PetsSeries API Client by all
 Contributions are more than welcome!
 
 
+## Supporting the project
+
+This project is free and stays free. If it is useful to you, you can support its
+development through [GitHub Sponsors](https://github.com/sponsors/AboveColin).
+Sponsorship is voluntary and unlocks nothing: every feature, fix and security
+update ships in the public release.
+
 __Disclaimer:__ This project is not affiliated with PetsSeries or Versuni. It is developed independently and is intended for personal use. Use it responsibly and respect the terms of service of the official PetsSeries API.
