@@ -49,7 +49,7 @@ class DevicesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/devices"
+        url = f"{self.config.home_url(home)}/devices"
         payload = {"productCtn": product_ctn}
 
         session = await self.client.get_client()
@@ -94,7 +94,7 @@ class DevicesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/devices/{device.id}"
+        url = f"{self.config.home_url(home)}/devices/{device.id}"
         payload = {"name": new_name}
 
         session = await self.client.get_client()
@@ -134,7 +134,7 @@ class DevicesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/devices/{device.id}"
+        url = f"{self.config.home_url(home)}/devices/{device.id}"
 
         session = await self.client.get_client()
         try:
@@ -173,7 +173,7 @@ class DevicesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/devices/{device.id}/settings"
+        url = f"{self.config.home_url(home)}/devices/{device.id}/settings"
 
         session = await self.client.get_client()
         try:
@@ -213,7 +213,7 @@ class DevicesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/devices/{device.id}/settings"
+        url = f"{self.config.home_url(home)}/devices/{device.id}/settings"
 
         payload = {}
         if filter_application_time is not None:

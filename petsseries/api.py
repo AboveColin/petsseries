@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import aiohttp  # type: ignore[import-not-found]
 
 from .auth import AuthManager
+from .backends import BACKENDS, Backend, backend_for
 from .config import Config
 from .constants import DeviceConstants, HTTPStatus, Timeouts, UserAgents
 from .decorators import handle_api_errors, validate_device_id, validate_local_key
@@ -81,6 +82,9 @@ class PetsSeriesClient:
         self._tuya_mobile: Optional[TuyaMobileClient] = None
         self._tuya_mobile_session: Optional[aiohttp.ClientSession] = None
         self._tuya_lock = asyncio.Lock()
+        # Device id -> backend key, filled by get_devices(). A device the client
+        # has not listed yet is taken to be a Pet Series app device.
+        self._device_backends: Dict[str, str] = {}
 
         # Initialize managers
         self.meals = MealsManager(self)
@@ -381,7 +385,13 @@ class PetsSeriesClient:
     @handle_api_errors("get homes")
     async def get_homes(self) -> list[Home]:
         """
-        Get available homes for the user.
+        Get the user's homes from every Philips app backend.
+
+        A feeder set up in the Philips HomeID app lives on a different backend
+        than one set up in the Pet Series app, so both are read. Each Home
+        records its backend in ``Home.backend``. An error from either backend
+        raises: a list missing one backend's homes would read as devices that
+        were removed.
 
         Returns:
             list[Home]: List of Home objects.
@@ -392,7 +402,17 @@ class PetsSeriesClient:
         """
         await self.ensure_token_valid()
         session = await self.get_client()
-        async with session.get(self.config.homes_url, headers=self.headers) as response:
+        homes: list[Home] = []
+        for backend in BACKENDS:
+            homes.extend(await self._get_backend_homes(session, backend))
+        return homes
+
+    async def _get_backend_homes(
+        self, session: aiohttp.ClientSession, backend: Backend
+    ) -> list[Home]:
+        """Read the homes of one backend and tag them with it."""
+        url = f"{self.config.base_url_for(backend.key)}/api/homes"
+        async with session.get(url, headers=self.headers) as response:
             response.raise_for_status()
             homes_data = await response.json()
             items = homes_data.get(
@@ -417,6 +437,7 @@ class PetsSeriesClient:
                 home.modes = h.get("modes", home.modes)
                 home.members = h.get("members", home.members)
                 home.vendor_ids = h.get("vendorIds", home.vendor_ids)
+                home.backend = backend.key
                 homes.append(home)
             return homes
 
@@ -436,7 +457,7 @@ class PetsSeriesClient:
             PetsSeriesNetworkError: If a network error occurs.
         """
         await self.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/devices"
+        url = f"{self.config.home_url(home)}/devices"
         session = await self.get_client()
         async with session.get(url, headers=self.headers) as response:
             response.raise_for_status()
@@ -466,7 +487,9 @@ class PetsSeriesClient:
                     subscription_url=d.get("subscriptionUrl"),
                     mcu_version=str(mcu_version) if mcu_version is not None else None,
                     wifi_version=str(wifi_version) if wifi_version is not None else None,
+                    backend=home.backend,
                 )
+                self._device_backends[device.id] = home.backend
                 devices.append(device)
             return devices
 
@@ -530,7 +553,7 @@ class PetsSeriesClient:
             PetsSeriesNetworkError: If a network error occurs.
         """
         await self.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/modes/home/devices"
+        url = f"{self.config.home_url(home)}/modes/home/devices"
         session = await self.get_client()
         async with session.get(url, headers=self.headers) as response:
             response.raise_for_status()
@@ -562,7 +585,7 @@ class PetsSeriesClient:
         """
         await self.ensure_token_valid()
         url = (
-            f"{self.config.base_url}/api/homes/{home.id}/modes/home/devices/{device_id}"
+            f"{self.config.home_url(home)}/modes/home/devices/{device_id}"
         )
 
         headers = {
@@ -750,6 +773,10 @@ class PetsSeriesClient:
         else:
             _LOGGER.warning("TuyaClient is not initialized.")
             return False
+
+    def device_backend(self, device_id: str) -> Backend:
+        """Return the backend (Philips app) that holds this device."""
+        return backend_for(self._device_backends.get(device_id))
 
     async def _tuya_action(
         self,

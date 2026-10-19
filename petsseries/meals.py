@@ -36,7 +36,7 @@ class MealsManager:
         Get meals for the selected home.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/meals"
+        url = f"{self.config.home_url(home)}/meals"
         session = await self.client.get_client()
         try:
             async with session.get(url, headers=self.client.headers) as response:
@@ -84,7 +84,7 @@ class MealsManager:
         if not meal.id:
             raise ValueError("Meal ID must be provided for updating a meal.")
 
-        url = f"{self.config.base_url}/api/homes/{home.id}/meals/{meal.id}"
+        url = f"{self.config.home_url(home)}/meals/{meal.id}"
 
         # Prepare the payload with updated fields
         def _to_iso8601(value):
@@ -211,7 +211,7 @@ class MealsManager:
                 "Content-Type": "application/json; charset=UTF-8",
             }
             async with session.post(
-                f"{self.config.base_url}/api/homes/{home.id}/meals",
+                f"{self.config.home_url(home)}/meals",
                 headers=headers,
                 json=payload,
             ) as response:
@@ -285,7 +285,7 @@ class MealsManager:
             Exception: For any unexpected errors.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/meals/{meal_id}"
+        url = f"{self.config.home_url(home)}/meals/{meal_id}"
 
         payload = {"enabled": enabled}
 
@@ -341,7 +341,7 @@ class MealsManager:
         Delete a specific meal from the selected home.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/meals/{meal_id}"
+        url = f"{self.config.home_url(home)}/meals/{meal_id}"
 
         session = await self.client.get_client()
         try:
