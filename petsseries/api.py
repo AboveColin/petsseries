@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import aiohttp  # type: ignore[import-not-found]
 
 from .auth import AuthManager
-from .backends import BACKENDS, Backend, backend_for
+from .backends import BACKENDS, PET_SERIES, Backend, backend_for
 from .config import Config
 from .constants import DeviceConstants, HTTPStatus, Timeouts, UserAgents
 from .decorators import handle_api_errors, validate_device_id, validate_local_key
@@ -35,7 +35,7 @@ from .models import (
 from .session import create_ssl_context
 from .tuya_cloud import get_tuya_credentials_from_philips, tuya_mobile_action_from_philips
 from .tuya_mobile import TuyaMobileClient
-from .native_signer import NativeTuyaSigner
+from .tuya_app import TuyaSession, build_signer
 
 # Optional import for Tuya local control
 try:
@@ -76,11 +76,11 @@ class PetsSeriesClient:
         self.config = Config()
         self.tuya_client: Optional[TuyaClient] = None  # type: ignore
         self.tuya_device_credentials: list = []  # List of device credentials (manually set)
-        # Cached Tuya mobile session, reused across cloud calls. Re-logging in on
-        # every call trips Tuya's daily login cap (USER_SESSION_LIMIT), so we log
-        # in once and reuse the session until it expires.
-        self._tuya_mobile: Optional[TuyaMobileClient] = None
-        self._tuya_mobile_session: Optional[aiohttp.ClientSession] = None
+        # Cached Tuya mobile sessions, one per Philips app (backend key), reused
+        # across cloud calls. Re-logging in on every call trips Tuya's daily
+        # login cap (USER_SESSION_LIMIT), so each is logged in once and reused
+        # until it expires.
+        self._tuya_sessions: Dict[str, TuyaSession] = {}
         self._tuya_lock = asyncio.Lock()
         # Device id -> backend key, filled by get_devices(). A device the client
         # has not listed yet is taken to be a Pet Series app device.
@@ -177,10 +177,9 @@ class PetsSeriesClient:
             await self.session.close()
             self.session = None
             _LOGGER.debug("aiohttp.ClientSession closed.")
-        if self._tuya_mobile_session:
-            await self._tuya_mobile_session.close()
-            self._tuya_mobile_session = None
-            self._tuya_mobile = None
+        for tuya in list(self._tuya_sessions.values()):
+            await tuya.http.close()
+        self._tuya_sessions.clear()
         await self.auth.close()
 
     def _find_device_credential(self, device_id: str) -> Optional[Dict[str, Any]]:
@@ -490,6 +489,10 @@ class PetsSeriesClient:
                     backend=home.backend,
                 )
                 self._device_backends[device.id] = home.backend
+                # The Tuya calls get the Tuya devId (vendorId), not the
+                # Philips id, so the backend must be found under both.
+                if device.vendor_id:
+                    self._device_backends[str(device.vendor_id)] = home.backend
                 devices.append(device)
             return devices
 
@@ -778,56 +781,95 @@ class PetsSeriesClient:
         """Return the backend (Philips app) that holds this device."""
         return backend_for(self._device_backends.get(device_id))
 
+    @property
+    def _tuya_mobile(self) -> Optional[TuyaMobileClient]:
+        """The Pet Series app's Tuya client, for callers written before HomeID."""
+        tuya = self._tuya_sessions.get(PET_SERIES.key)
+        return tuya.client if tuya else None
+
+    async def tuya_session(self, device_id: str, country_code: str = "1") -> TuyaSession:
+        """Return the logged-in Tuya session of the app that holds this device."""
+        backend = self.device_backend(device_id)
+        async with self._tuya_lock:
+            tuya = self._tuya_sessions.get(backend.key)
+            if tuya is None:
+                tuya = await self._tuya_login(backend, country_code)
+            return tuya
+
     async def _tuya_action(
         self,
         action: str,
         payload: Dict[str, Any],
         *,
+        device_id: str,
         version: str = "1.0",
         country_code: str = "1",
     ) -> Dict[str, Any]:
-        """Call a Tuya mobile action reusing one cached, logged-in session.
+        """Call a Tuya mobile action in the session of the device's own app.
 
         Logging in on every call trips Tuya's daily login cap
-        (USER_SESSION_LIMIT), so we keep a single session and only re-login when
-        it is missing or has expired. A login is never retried on a rate-limit
-        error, which would only make it worse.
+        (USER_SESSION_LIMIT), so each app keeps one session and re-logs in only
+        when it is missing or has expired. A login is never retried on a
+        rate-limit error, which would only make it worse.
         """
         if not self.auth.id_token:
             return {}
+        backend = self.device_backend(device_id)
         async with self._tuya_lock:
-            if self._tuya_mobile is None:
-                await self._tuya_login(country_code)
+            tuya = self._tuya_sessions.get(backend.key)
+            if tuya is None:
+                tuya = await self._tuya_login(backend, country_code)
             try:
-                return await self._tuya_mobile._call(action, payload, version=version)
+                return await tuya.client._call(action, payload, version=version)
             except Exception as err:  # noqa: BLE001 - inspect message to decide retry
                 message = str(err)
                 if "LIMIT" in message.upper():
                     raise
                 # Likely an expired session: re-login once and retry.
-                _LOGGER.debug("Tuya action %s failed (%s); re-logging in once", action, message)
-                await self._tuya_login(country_code, force=True)
-                return await self._tuya_mobile._call(action, payload, version=version)
+                _LOGGER.debug(
+                    "Tuya action %s (%s) failed (%s); re-logging in once",
+                    action,
+                    backend.key,
+                    message,
+                )
+                tuya = await self._tuya_login(backend, country_code, force=True)
+                return await tuya.client._call(action, payload, version=version)
 
-    async def _tuya_login(self, country_code: str = "1", *, force: bool = False) -> None:
-        """(Re)establish the cached Tuya mobile session from the Philips token."""
-        if force and self._tuya_mobile_session is not None:
-            await self._tuya_mobile_session.close()
-            self._tuya_mobile = None
-            self._tuya_mobile_session = None
+    async def _tuya_login(
+        self, backend: Backend, country_code: str = "1", *, force: bool = False
+    ) -> TuyaSession:
+        """(Re)establish one app's cached Tuya session from the Philips token."""
+        old = self._tuya_sessions.pop(backend.key, None)
+        if old is not None:
+            if not force:
+                self._tuya_sessions[backend.key] = old
+                return old
+            await old.http.close()
         # Make sure the Philips id_token is current before the (rare) login.
         await self.ensure_token_valid()
-        signer = NativeTuyaSigner.from_environment()
-        self._tuya_mobile_session = aiohttp.ClientSession()
-        self._tuya_mobile = TuyaMobileClient(signer, self._tuya_mobile_session)
-        await self._tuya_mobile.login_with_philips_token(self.auth.id_token, country_code)
+        http = aiohttp.ClientSession()
+        try:
+            client = TuyaMobileClient(build_signer(backend), http)
+            data = await client.login_with_philips_token(self.auth.id_token, country_code)
+        except BaseException:
+            await http.close()
+            raise
+        partner = data.get("partnerIdentity") if isinstance(data, dict) else None
+        tuya = TuyaSession(
+            backend=backend,
+            client=client,
+            http=http,
+            partner_id=str(partner or backend.partner_id),
+        )
+        self._tuya_sessions[backend.key] = tuya
+        return tuya
 
     async def get_cloud_device_status(self, device_id: str) -> Dict[str, Any]:
         """Read device DPs through the Philips/Tuya cloud channel."""
         if not self.auth.id_token:
             return {}
         result = await self._tuya_action(
-            "s.m.dev.dp.get", {"devId": device_id, "gwId": device_id}
+            "s.m.dev.dp.get", {"devId": device_id, "gwId": device_id}, device_id=device_id
         )
         if isinstance(result, dict) and isinstance(result.get("result"), dict):
             nested = result["result"]
@@ -838,7 +880,9 @@ class PetsSeriesClient:
         """Read the Tuya device metadata and DP schema without changing state."""
         if not self.auth.id_token:
             return {}
-        result = await self._tuya_action("thing.m.device.get", {"devId": device_id})
+        result = await self._tuya_action(
+            "thing.m.device.get", {"devId": device_id}, device_id=device_id
+        )
         if isinstance(result, dict) and isinstance(result.get("result"), dict):
             return result["result"]
         return result if isinstance(result, dict) else {}
@@ -856,7 +900,9 @@ class PetsSeriesClient:
         """
         if not self.auth.id_token:
             return {}
-        result = await self._tuya_action("thing.m.ipc.rtc.config.get", {"devId": device_id})
+        result = await self._tuya_action(
+            "thing.m.ipc.rtc.config.get", {"devId": device_id}, device_id=device_id
+        )
         if isinstance(result, dict) and isinstance(result.get("result"), dict):
             return result["result"]
         return result if isinstance(result, dict) else {}
@@ -872,7 +918,7 @@ class PetsSeriesClient:
         if not self.auth.id_token:
             return []
         result = await self._tuya_action(
-            "thing.m.device.upgrade.info", {"devId": device_id}, version="1.2"
+            "thing.m.device.upgrade.info", {"devId": device_id}, device_id=device_id, version="1.2"
         )
         if isinstance(result, dict):
             value = result.get("result", result)
@@ -893,6 +939,7 @@ class PetsSeriesClient:
         result = await self._tuya_action(
             "s.m.upgrade.info",
             {"productKey": product_key, "devId": device_id},
+            device_id=device_id,
             version="2.0",
         )
         if isinstance(result, dict):
@@ -941,6 +988,7 @@ class PetsSeriesClient:
         result = await self._tuya_action(
             "thing.m.device.dp.publish",
             {"devId": device_id, "gwId": device_id, "dps": __import__("json").dumps(dps, separators=(",", ":"))},
+            device_id=device_id,
         )
         if result.get("success") is False or result.get("errorCode") or result.get("errorMsg"):
             raise RuntimeError(
