@@ -106,7 +106,7 @@ class HomesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}"
+        url = f"{self.config.home_url(home)}"
         payload = {"name": new_name}
 
         session = await self.client.get_client()
@@ -145,7 +145,7 @@ class HomesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}"
+        url = f"{self.config.home_url(home)}"
 
         session = await self.client.get_client()
         try:
@@ -179,7 +179,7 @@ class HomesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}"
+        url = f"{self.config.home_url(home)}"
 
         session = await self.client.get_client()
         try:
@@ -217,7 +217,7 @@ class HomesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/invites"
+        url = f"{self.config.home_url(home)}/invites"
 
         session = await self.client.get_client()
         try:
@@ -260,7 +260,7 @@ class HomesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/invites"
+        url = f"{self.config.home_url(home)}/invites"
         payload = {
             "email": email,
             "label": label,
@@ -307,7 +307,7 @@ class HomesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/invites/{invite_token}"
+        url = f"{self.config.home_url(home)}/invites/{invite_token}"
         payload = {"email": email}
 
         session = await self.client.get_client()
@@ -347,7 +347,7 @@ class HomesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/invites/{invite_token}"
+        url = f"{self.config.home_url(home)}/invites/{invite_token}"
 
         session = await self.client.get_client()
         try:
@@ -385,7 +385,7 @@ class HomesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/invites/{invite_token}"
+        url = f"{self.config.home_url(home)}/invites/{invite_token}"
         payload = {"label": new_label}
 
         session = await self.client.get_client()
@@ -429,7 +429,7 @@ class HomesManager:
             aiohttp.ClientResponseError: If the HTTP request fails.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/invites/{invite_token}"
+        url = f"{self.config.home_url(home)}/invites/{invite_token}"
 
         session = await self.client.get_client()
         try:

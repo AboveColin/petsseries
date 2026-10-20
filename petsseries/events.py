@@ -95,7 +95,7 @@ class EventsManager:
         to_date_encoded = urllib.parse.quote(to_date.isoformat())
 
         url = (
-            f"{self.config.base_url}/api/homes/{home.id}/events"
+            f"{self.config.home_url(home)}/events"
             f"?from={from_date_encoded}&to={to_date_encoded}&clustered={clustered}"
             f"{types_param}"
         )
@@ -132,7 +132,7 @@ class EventsManager:
             Exception: For any unexpected errors.
         """
         await self.client.ensure_token_valid()
-        url = f"{self.config.base_url}/api/homes/{home.id}/events/{event_id}"
+        url = f"{self.config.home_url(home)}/events/{event_id}"
         session = await self.client.get_client()
         try:
             async with session.get(url, headers=self.client.headers) as response:

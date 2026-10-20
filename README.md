@@ -229,8 +229,15 @@ print(user.name, user.email)
 ```python
 homes = await client.get_homes()
 for home in homes:
-    print(home.name)
+    print(home.name, home.backend)
 ```
+
+A feeder set up in the Philips HomeID app lives on a different backend, and in a
+different Tuya app, than one set up in the Philips Pet Series app. One Philips
+login reads both. `get_homes()` returns the homes of both apps, and
+`home.backend` is `"pet_series"` or `"homeid"`. Every call that takes a home or
+a device id goes to the backend and the Tuya app that hold it, so callers do not
+need to know which app set the feeder up.
 
 #### Get Devices
 ```python
@@ -317,6 +324,7 @@ print(f"Meal updated: {updated_meal}")
 The client provides a `HomesManager` for managing homes and home invitations. This supports sharing homes with family members.
 
 #### Create a Home
+A new home is created on the Pet Series app's backend.
 ```python
 # Create a new home
 new_home = await client.homes_manager.create_home("My New Home")
