@@ -4,6 +4,7 @@ PetsSeriesClient module.
 
 from .api import PetsSeriesClient
 from .auth import AuthError, AuthManager
+from .backends import BACKENDS, HOMEID, PET_SERIES, Backend, backend_for
 from .native_signer import NativeSignerError, NativeTuyaSigner
 from .tuya_mobile import TuyaMobileClient
 from .devices import DevicesManager
@@ -45,6 +46,11 @@ from .enhanced_credentials import (
 )
 
 __all__ = [
+    "BACKENDS",
+    "Backend",
+    "HOMEID",
+    "PET_SERIES",
+    "backend_for",
     # Main client
     "PetsSeriesClient",
     # Auth

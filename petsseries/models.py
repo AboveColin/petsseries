@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from .backends import PET_SERIES
+
 
 @dataclass
 class User:
@@ -64,6 +66,8 @@ class Home:  # pylint: disable=too-many-instance-attributes
     modes: Optional[List[Dict[str, Any]]] = None
     members: Optional[List[Dict[str, Any]]] = None
     vendor_ids: Optional[Dict[str, Any]] = None
+    # Which Philips app's backend holds this home (see petsseries.backends).
+    backend: str = PET_SERIES.key
 
     def get_home_id(self) -> str:
         """Retrieve the home's unique identifier."""
@@ -131,6 +135,8 @@ class Device:
     # type 0 as WiFi; API responses may omit either component.
     mcu_version: Optional[str] = None
     wifi_version: Optional[str] = None
+    # Which Philips app's backend and Tuya space hold this device.
+    backend: str = PET_SERIES.key
 
     def get_device_id(self) -> str:
         """Retrieve the device's unique identifier."""
