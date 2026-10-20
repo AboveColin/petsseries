@@ -489,6 +489,10 @@ class PetsSeriesClient:
                     backend=home.backend,
                 )
                 self._device_backends[device.id] = home.backend
+                # The Tuya calls get the Tuya devId (vendorId), not the
+                # Philips id, so the backend must be found under both.
+                if device.vendor_id:
+                    self._device_backends[str(device.vendor_id)] = home.backend
                 devices.append(device)
             return devices
 

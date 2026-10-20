@@ -163,6 +163,20 @@ class TestHomeScopedCalls:
         assert client.device_backend("d1") is HOMEID
 
     @pytest.mark.asyncio
+    async def test_a_homeid_device_is_found_by_its_tuya_dev_id(
+        self, client: PetsSeriesClient, backends: tuple[FakeBackend, FakeBackend]
+    ) -> None:
+        _, homeid = backends
+        homeid.json(
+            "/api/homes/h1/devices",
+            {"item": [{"id": "d1", "name": "Feeder", "vendorId": "bf6ceb"}]},
+        )
+
+        await client.get_devices(Home(id="h1", name="x", backend="homeid"))
+
+        assert client.device_backend("bf6ceb") is HOMEID
+
+    @pytest.mark.asyncio
     async def test_meals_of_a_homeid_home_come_from_the_homeid_backend(
         self, client: PetsSeriesClient, backends: tuple[FakeBackend, FakeBackend]
     ) -> None:
