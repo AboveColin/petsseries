@@ -29,6 +29,9 @@ class Backend:
     # Tuya partner prefix for the MQTT username. The login response carries it
     # as partnerIdentity; this value is the fallback when it does not.
     partner_id: str = ""
+    # countryCode for the Tuya thirdLogin. Empty means the dial code of the
+    # account's country: tuya_mobile then reads PETSERIES_TUYA_COUNTRY_CODE.
+    tuya_country_code: str = ""
 
     @property
     def package(self) -> str:
@@ -50,6 +53,9 @@ PET_SERIES = Backend(
         }
     ),
     partner_id="p2065237",
+    # This library has always sent "1" for this app, and those logins find the
+    # user's devices. A change could log in to a different Tuya user.
+    tuya_country_code="1",
 )
 
 HOMEID = Backend(
@@ -66,6 +72,8 @@ HOMEID = Backend(
         }
     ),
     partner_id="p2645382",
+    # The HomeID app sends the dial code of the app's country ("31" for the
+    # Netherlands), so this login does the same.
 )
 
 BACKENDS: tuple[Backend, ...] = (PET_SERIES, HOMEID)

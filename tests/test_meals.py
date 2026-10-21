@@ -124,8 +124,8 @@ class TestListing:
                     {
                         "id": "m1",
                         "name": "Ontbijt",
-                        "portionAmount": 2,
-                        "feedTime": "07:30:00",
+                        "amount": 2,
+                        "time": "07:30",
                         "repeatDays": [1, 2, 3],
                         "deviceId": "d1",
                         "enabled": True,
@@ -137,11 +137,14 @@ class TestListing:
         result = await meals.get_meals(HOME)
         assert [m.name for m in result] == ["Ontbijt"]
         assert result[0].repeat_days == [1, 2, 3]
+        assert result[0].portion_amount == 2
+        assert result[0].feed_time == "07:30"
 
     async def test_the_older_field_names_still_parse(
         self, api: FakeApi, meals: MealsManager
     ) -> None:
-        # Earlier firmware sent amount/time rather than portionAmount/feedTime.
+        # Both app backends answer with amount/time. The portionAmount and
+        # feedTime names are still read in case a response carries them.
         api.json(
             "GET",
             "/api/homes/h1/meals",
@@ -150,8 +153,8 @@ class TestListing:
                     {
                         "id": "m1",
                         "name": "Ontbijt",
-                        "amount": 3,
-                        "time": "08:00:00",
+                        "portionAmount": 3,
+                        "feedTime": "08:00:00",
                         "repeatDays": [1],
                         "deviceId": "d1",
                         "enabled": True,
@@ -201,15 +204,17 @@ class TestListing:
 class TestUpdating:
     """Changing a meal, which the API answers two ways."""
 
-    async def test_the_payload_carries_the_four_editable_fields(
+    async def test_the_payload_is_the_app_create_meal_request(
         self, api: FakeApi, meals: MealsManager
     ) -> None:
+        # The apps send the full CreateMealRequest on a PATCH too.
         api.empty("PATCH", "/api/homes/h1/meals/m1", 204)
         await meals.update_meal(HOME, a_meal())
         assert api.bodies[-1] == {
             "name": "Ontbijt",
-            "portionAmount": 2.0,
-            "feedTime": "07:30:00",
+            "time": "07:30",
+            "amount": 2,
+            "deviceId": "d1",
             "repeatDays": [1, 2, 3, 4, 5],
         }
 
@@ -222,12 +227,12 @@ class TestUpdating:
         await meals.update_meal(HOME, a_meal(repeat_days=[]))
         assert api.bodies[-1]["repeatDays"] == EVERY_DAY
 
-    async def test_a_time_object_is_sent_as_iso_8601(
+    async def test_a_time_object_is_sent_as_hours_and_minutes(
         self, api: FakeApi, meals: MealsManager
     ) -> None:
         api.empty("PATCH", "/api/homes/h1/meals/m1", 204)
         await meals.update_meal(HOME, a_meal(feed_time=time(7, 30)))
-        assert api.bodies[-1]["feedTime"] == "07:30:00"
+        assert api.bodies[-1]["time"] == "07:30"
 
     async def test_a_204_returns_the_meal_that_was_sent(
         self, api: FakeApi, meals: MealsManager
@@ -309,6 +314,44 @@ class TestUpdating:
             await meals.update_meal(HOME, a_meal())
 
 
+class TestRequestValues:
+    """The values in a CreateMealRequest, checked before any request."""
+
+    @pytest.mark.parametrize(
+        ("given", "sent"),
+        [
+            ("7:05", "07:05"),
+            ("07:05", "07:05"),
+            ("07:05:00", "07:05"),
+            ("07:05Z", "07:05"),
+            (time(23, 59), "23:59"),
+        ],
+    )
+    async def test_accepted_time_forms(
+        self, api: FakeApi, meals: MealsManager, given: object, sent: str
+    ) -> None:
+        api.empty("PATCH", "/api/homes/h1/meals/m1", 204)
+        await meals.update_meal(HOME, a_meal(feed_time=given))
+        assert api.bodies[-1]["time"] == sent
+
+    @pytest.mark.parametrize("given", ["7", "24:00", "07:60", "breakfast", ""])
+    async def test_a_time_the_backend_cannot_read_is_refused(
+        self, api: FakeApi, meals: MealsManager, given: str
+    ) -> None:
+        with pytest.raises(ValueError, match="HH:mm"):
+            await meals.create_meal(HOME, a_meal(id="", feed_time=given))
+        assert api.requests == []
+
+    @pytest.mark.parametrize("given", [2.5, 0, -1])
+    async def test_an_amount_that_is_not_whole_portions_is_refused(
+        self, api: FakeApi, meals: MealsManager, given: float
+    ) -> None:
+        # Rounding 2.5 would change how much food the feeder gives.
+        with pytest.raises(ValueError, match="whole number"):
+            await meals.create_meal(HOME, a_meal(id="", portion_amount=given))
+        assert api.requests == []
+
+
 class TestCreating:
     """A new meal, which the API answers two ways."""
 
@@ -323,10 +366,10 @@ class TestCreating:
         )
         await meals.create_meal(HOME, a_meal(id=""))
         assert api.bodies[-1] == {
-            "deviceId": "d1",
-            "feedTime": "07:30:00",
             "name": "Ontbijt",
-            "portionAmount": 2.0,
+            "time": "07:30",
+            "amount": 2,
+            "deviceId": "d1",
             "repeatDays": [1, 2, 3, 4, 5],
         }
 

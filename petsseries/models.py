@@ -120,6 +120,8 @@ class Device:
         url (str): URL endpoint for the device.
         settings_url (str): URL endpoint for the device settings.
         subscription_url (str): URL endpoint for device subscriptions.
+        mac_address (str): Wi-Fi MAC address. The HomeID backend sends it, the
+            Pet Series backend does not.
     """
 
     id: str
@@ -137,6 +139,7 @@ class Device:
     wifi_version: Optional[str] = None
     # Which Philips app's backend and Tuya space hold this device.
     backend: str = PET_SERIES.key
+    mac_address: Optional[str] = None
 
     def get_device_id(self) -> str:
         """Retrieve the device's unique identifier."""

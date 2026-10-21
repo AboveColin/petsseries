@@ -177,6 +177,20 @@ class TestHomeScopedCalls:
         assert client.device_backend("bf6ceb") is HOMEID
 
     @pytest.mark.asyncio
+    async def test_the_mac_address_of_a_homeid_device_is_kept(
+        self, client: PetsSeriesClient, backends: tuple[FakeBackend, FakeBackend]
+    ) -> None:
+        _, homeid = backends
+        homeid.json(
+            "/api/homes/h1/devices",
+            {"item": [{"id": "d1", "name": "Feeder", "macAddress": "02:00:00:00:00:01"}]},
+        )
+
+        devices = await client.get_devices(Home(id="h1", name="x", backend="homeid"))
+
+        assert devices[0].mac_address == "02:00:00:00:00:01"
+
+    @pytest.mark.asyncio
     async def test_meals_of_a_homeid_home_come_from_the_homeid_backend(
         self, client: PetsSeriesClient, backends: tuple[FakeBackend, FakeBackend]
     ) -> None:
@@ -207,6 +221,7 @@ class FakeTuyaClient:
     """Stands in for tuya_mobile.TuyaMobileClient; records which app signed."""
 
     logins: list[str] = []
+    country_codes: dict[str, Any] = {}
     login_extra: dict[str, dict[str, Any]] = {}
 
     def __init__(self, signer: Any, session: Any) -> None:
@@ -214,8 +229,9 @@ class FakeTuyaClient:
         self.app_id = signer.app_id
         self.calls: list[str] = []
 
-    async def login_with_philips_token(self, id_token: str, country_code: str) -> dict[str, Any]:
+    async def login_with_philips_token(self, id_token: str, country_code: Any) -> dict[str, Any]:
         FakeTuyaClient.logins.append(self.app_id)
+        FakeTuyaClient.country_codes[self.app_id] = country_code
         return {"uid": "u", "sid": "s", **FakeTuyaClient.login_extra.get(self.app_id, {})}
 
     async def _call(self, action: str, payload: dict[str, Any], *, version: str = "1.0") -> dict[str, Any]:
@@ -226,6 +242,7 @@ class FakeTuyaClient:
 @pytest.fixture
 def fake_tuya(monkeypatch: pytest.MonkeyPatch) -> type[FakeTuyaClient]:
     FakeTuyaClient.logins = []
+    FakeTuyaClient.country_codes = {}
     FakeTuyaClient.login_extra = {}
     monkeypatch.setattr(api_module, "TuyaMobileClient", FakeTuyaClient)
     return FakeTuyaClient
@@ -285,6 +302,33 @@ class TestTuyaPerApp:
         assert client._tuya_mobile is None
         session = await client.tuya_session("pet-dev")
         assert client._tuya_mobile is session.client
+
+
+class TestTuyaCountryCode:
+    @pytest.mark.asyncio
+    async def test_the_pet_series_login_keeps_country_code_1(
+        self, client: PetsSeriesClient, fake_tuya: type[FakeTuyaClient]
+    ) -> None:
+        await client.tuya_session("pet-dev")
+        assert fake_tuya.country_codes[PET_SERIES.tuya_app["app_id"]] == "1"
+
+    @pytest.mark.asyncio
+    async def test_the_homeid_login_leaves_the_country_to_the_account(
+        self, client: PetsSeriesClient, fake_tuya: type[FakeTuyaClient]
+    ) -> None:
+        # None makes tuya_mobile read PETSERIES_TUYA_COUNTRY_CODE, the dial
+        # code of the account's country, which is what the HomeID app sends.
+        client._device_backends["hid-dev"] = "homeid"
+        await client.tuya_session("hid-dev")
+        assert fake_tuya.country_codes[HOMEID.tuya_app["app_id"]] is None
+
+    @pytest.mark.asyncio
+    async def test_a_country_code_from_the_caller_wins(
+        self, client: PetsSeriesClient, fake_tuya: type[FakeTuyaClient]
+    ) -> None:
+        client._device_backends["hid-dev"] = "homeid"
+        await client.tuya_session("hid-dev", country_code="44")
+        assert fake_tuya.country_codes[HOMEID.tuya_app["app_id"]] == "44"
 
 
 class TestSigners:

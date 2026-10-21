@@ -5,6 +5,7 @@ MealsManager module for handling meal-related operations in the PetsSeriesClient
 """
 
 import logging
+import re
 import urllib.parse
 from typing import Any, List
 
@@ -14,6 +15,57 @@ from .config import Config
 from .models import Home, Meal
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _wire_time(value: Any) -> str:
+    """Return a meal time in the "HH:mm" form that both app backends take.
+
+    The apps send CreateMealRequest.time as "HH:mm" and the backends return
+    the same form. A datetime.time, "HH:mm", "HH:mm:ss" and "HH:mmZ" are
+    accepted. Anything else raises, because a time the backend reads
+    differently would feed the animal at the wrong hour.
+    """
+    if hasattr(value, "hour") and hasattr(value, "minute"):
+        return f"{int(value.hour):02d}:{int(value.minute):02d}"
+    match = re.match(r"^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?Z?$", str(value).strip())
+    if match is None:
+        raise ValueError(f"Meal time must be HH:mm, got {value!r}")
+    hour, minute = int(match.group(1)), int(match.group(2))
+    if hour > 23 or minute > 59:
+        raise ValueError(f"Meal time must be HH:mm, got {value!r}")
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _wire_amount(value: Any) -> int:
+    """Return a portion count as the integer the backends take.
+
+    CreateMealRequest.amount is an int in the app. A fractional amount
+    raises instead of being rounded, because rounding changes the food the
+    feeder gives.
+    """
+    amount = float(value)
+    if not amount.is_integer() or amount < 1:
+        raise ValueError(f"Meal amount must be a whole number of portions, got {value!r}")
+    return int(amount)
+
+
+def _meal_body(meal: Meal, repeat_days: List[int]) -> dict:
+    """Return the CreateMealRequest body. POST and the full PATCH use it."""
+    return {
+        "name": meal.name,
+        "time": _wire_time(meal.feed_time),
+        "amount": _wire_amount(meal.portion_amount),
+        "deviceId": meal.device_id,
+        "repeatDays": repeat_days,
+    }
+
+
+def _first(data: dict, *keys: str) -> Any:
+    """Return the first value of keys that is present and not None."""
+    for key in keys:
+        if data.get(key) is not None:
+            return data[key]
+    return None
 
 
 class MealsManager:
@@ -46,8 +98,8 @@ class MealsManager:
                     Meal(
                         id=meal["id"],
                         name=meal["name"],
-                        portion_amount=meal.get("portionAmount") if meal.get("portionAmount") is not None else meal.get("amount"),
-                        feed_time=meal.get("feedTime") if meal.get("feedTime") is not None else meal.get("time"),
+                        portion_amount=_first(meal, "amount", "portionAmount"),
+                        feed_time=_first(meal, "time", "feedTime"),
                         repeat_days=meal["repeatDays"],
                         device_id=meal["deviceId"],
                         enabled=meal["enabled"],
@@ -86,25 +138,12 @@ class MealsManager:
 
         url = f"{self.config.home_url(home)}/meals/{meal.id}"
 
-        # Prepare the payload with updated fields
-        def _to_iso8601(value):
-            try:
-                # datetime/date/time objects
-                return value.isoformat()  # type: ignore[attr-defined]
-            except Exception:
-                return str(value)
-
         # Normalize repeat days to a list of ints
         repeat_days: List[int] = (
             meal.repeat_days if meal.repeat_days else [1, 2, 3, 4, 5, 6, 7]
         )
 
-        payload = {
-            "name": meal.name,
-            "portionAmount": meal.portion_amount,
-            "feedTime": _to_iso8601(meal.feed_time),
-            "repeatDays": repeat_days,
-        }
+        payload = _meal_body(meal, repeat_days)
 
         session = await self.client.get_client()
         try:
@@ -134,10 +173,10 @@ class MealsManager:
                     return Meal(
                         id=updated_data["id"],
                         name=updated_data["name"],
-                        portion_amount=updated_data["portionAmount"],
-                        feed_time=updated_data["feedTime"],
+                        portion_amount=_first(updated_data, "amount", "portionAmount"),
+                        feed_time=_first(updated_data, "time", "feedTime"),
                         repeat_days=parsed_repeat_days,
-                        device_id=updated_data["deviceId"],
+                        device_id=updated_data.get("deviceId", meal.device_id),
                         enabled=updated_data.get("enabled", True),
                         url=updated_data["url"],
                     )
@@ -147,8 +186,8 @@ class MealsManager:
                     return Meal(
                         id=meal.id,
                         name=meal.name,
-                        portion_amount=meal.portion_amount,
-                        feed_time=_to_iso8601(meal.feed_time),
+                        portion_amount=payload["amount"],
+                        feed_time=payload["time"],
                         repeat_days=repeat_days,
                         device_id=meal.device_id,
                         enabled=getattr(meal, "enabled", True),
@@ -190,19 +229,7 @@ class MealsManager:
         else:
             repeat_days = meal.repeat_days
 
-        def _to_iso8601(value):
-            try:
-                return value.isoformat()  # type: ignore[attr-defined]
-            except Exception:
-                return str(value)
-
-        payload = {
-            "deviceId": meal.device_id,
-            "feedTime": _to_iso8601(meal.feed_time),
-            "name": meal.name,
-            "portionAmount": meal.portion_amount,
-            "repeatDays": repeat_days,
-        }
+        payload = _meal_body(meal, repeat_days)
 
         session = await self.client.get_client()
         try:
@@ -235,8 +262,8 @@ class MealsManager:
                     return Meal(
                         id=meal_id,
                         name=meal.name,
-                        portion_amount=meal.portion_amount,
-                        feed_time=_to_iso8601(meal.feed_time),
+                        portion_amount=payload["amount"],
+                        feed_time=payload["time"],
                         repeat_days=repeat_days,
                         device_id=meal.device_id,
                         enabled=True,
@@ -250,10 +277,10 @@ class MealsManager:
                     return Meal(
                         id=created["id"],
                         name=created["name"],
-                        portion_amount=created["portionAmount"],
-                        feed_time=created["feedTime"],
+                        portion_amount=_first(created, "amount", "portionAmount"),
+                        feed_time=_first(created, "time", "feedTime"),
                         repeat_days=created.get("repeatDays", repeat_days),
-                        device_id=created["deviceId"],
+                        device_id=created.get("deviceId", meal.device_id),
                         enabled=created.get("enabled", True),
                         url=created.get("url", ""),
                     )
