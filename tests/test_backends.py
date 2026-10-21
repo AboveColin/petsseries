@@ -31,6 +31,7 @@ class FakeBackend:
     def __init__(self) -> None:
         self.app = web.Application()
         self.paths: list[str] = []
+        self.bodies: list[object] = []
         self.routes: dict[str, tuple[int, object]] = {}
         self.app.router.add_route("*", "/{tail:.*}", self._dispatch)
         self.url = ""
@@ -40,7 +41,11 @@ class FakeBackend:
 
     async def _dispatch(self, request: web.Request) -> web.StreamResponse:
         self.paths.append(request.path)
+        if request.can_read_body:
+            self.bodies.append(await request.json())
         status, payload = self.routes.get(request.path, (404, {"message": "no route"}))
+        if status == 204:
+            return web.Response(status=204)
         return web.json_response(payload, status=status)
 
 
@@ -201,6 +206,45 @@ class TestHomeScopedCalls:
         await client.meals.get_meals(Home(id="h1", name="x", backend="homeid"))
 
         assert homeid.paths == ["/api/homes/h1/meals"]
+        assert pet.paths == []
+
+    @pytest.mark.asyncio
+    async def test_the_notification_switches_of_a_homeid_feeder_are_read(
+        self, client: PetsSeriesClient, backends: tuple[FakeBackend, FakeBackend]
+    ) -> None:
+        _, homeid = backends
+        settings = {
+            "device_active": {"category": "general", "value": True},
+            "push_notification_desiccant_bag": {"category": "feeder", "value": False},
+        }
+        homeid.json(
+            "/api/homes/h1/modes/home/devices",
+            {"item": [{"id": "d1", "name": "Feeder", "settings": settings}]},
+        )
+
+        result = await client.get_settings(Home(id="h1", name="x", backend="homeid"), "d1")
+
+        assert result == {"device_active": True, "push_notification_desiccant_bag": False}
+
+    @pytest.mark.asyncio
+    async def test_a_mode_setting_is_written_to_the_homes_backend(
+        self, client: PetsSeriesClient, backends: tuple[FakeBackend, FakeBackend]
+    ) -> None:
+        pet, homeid = backends
+        homeid.json("/api/homes/h1/modes/home/devices/d1", None, status=204)
+
+        ok = await client.set_mode_setting(
+            Home(id="h1", name="x", backend="homeid"),
+            "d1",
+            "push_notification_meal_dispensed",
+            False,
+        )
+
+        assert ok is True
+        assert homeid.paths == ["/api/homes/h1/modes/home/devices/d1"]
+        assert homeid.bodies == [
+            {"settings": {"push_notification_meal_dispensed": {"value": False}}}
+        ]
         assert pet.paths == []
 
     def test_a_home_without_a_backend_is_a_pet_series_home(self) -> None:

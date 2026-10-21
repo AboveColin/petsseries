@@ -641,31 +641,45 @@ class PetsSeriesClient:
         _LOGGER.warning("No settings found for device %s", device_id)
         raise PetsSeriesValidationError(f"Device with ID {device_id} not found")
 
+    async def set_mode_setting(
+        self, home: Home, device_id: str, key: str, value: bool
+    ) -> bool:
+        """
+        Set one switch of the home mode of a device.
+
+        The keys are the ones ``get_settings`` returns. A Pet Series feeder
+        has ``device_active``, ``record_video_motion`` and
+        ``push_notification_motion``. A HomeID feeder also has a
+        ``push_notification_*`` switch for each feeder notification.
+
+        Returns:
+            bool: True if the backend answered HTTP 204.
+        """
+        return await self.update_device_settings(
+            home, device_id, {key: {"value": bool(value)}}
+        )
+
     async def power_off_device(self, home: Home, device_id: str) -> bool:
         """
         Power off a device.
         """
         _LOGGER.info("Powering off device %s", device_id)
-        return await self.update_device_settings(
-            home, device_id, {"device_active": {"value": False}}
-        )
+        return await self.set_mode_setting(home, device_id, "device_active", False)
 
     async def power_on_device(self, home: Home, device_id: str) -> bool:
         """
         Power on a device.
         """
         _LOGGER.info("Powering on device %s", device_id)
-        return await self.update_device_settings(
-            home, device_id, {"device_active": {"value": True}}
-        )
+        return await self.set_mode_setting(home, device_id, "device_active", True)
 
     async def disable_motion_notifications(self, home: Home, device_id: str) -> bool:
         """
         Disable motion notifications for a device.
         """
         _LOGGER.info("Disabling motion notifications for device %s", device_id)
-        return await self.update_device_settings(
-            home, device_id, {"push_notification_motion": {"value": False}}
+        return await self.set_mode_setting(
+            home, device_id, "push_notification_motion", False
         )
 
     async def enable_motion_notifications(self, home: Home, device_id: str) -> bool:
@@ -673,8 +687,8 @@ class PetsSeriesClient:
         Enable motion notifications for a device.
         """
         _LOGGER.info("Enabling motion notifications for device %s", device_id)
-        return await self.update_device_settings(
-            home, device_id, {"push_notification_motion": {"value": True}}
+        return await self.set_mode_setting(
+            home, device_id, "push_notification_motion", True
         )
 
     async def toggle_motion_notifications(self, home: Home, device_id: str) -> bool:
