@@ -230,6 +230,19 @@ class TestHomeScopedCalls:
         assert result == {"device_active": True, "push_notification_desiccant_bag": False}
 
     @pytest.mark.asyncio
+    async def test_a_mode_setting_answered_with_200_counts_as_written(
+        self, client: PetsSeriesClient, backends: tuple[FakeBackend, FakeBackend]
+    ) -> None:
+        _, homeid = backends
+        homeid.json("/api/homes/h1/modes/home/devices/d1", {}, status=200)
+
+        ok = await client.set_mode_setting(
+            Home(id="h1", name="x", backend="homeid"), "d1", "device_active", True
+        )
+
+        assert ok is True
+
+    @pytest.mark.asyncio
     async def test_a_mode_setting_is_written_to_the_homes_backend(
         self, client: PetsSeriesClient, backends: tuple[FakeBackend, FakeBackend]
     ) -> None:
@@ -376,6 +389,17 @@ class TestTuyaCountryCode:
         client._device_backends["hid-dev"] = "homeid"
         await client.tuya_session("hid-dev", country_code="44")
         assert fake_tuya.country_codes[HOMEID.tuya_app["app_id"]] == "44"
+
+    @pytest.mark.asyncio
+    async def test_the_clients_country_code_applies_to_homeid_only(
+        self, client: PetsSeriesClient, fake_tuya: type[FakeTuyaClient]
+    ) -> None:
+        client.tuya_country_code = "31"
+        client._device_backends["hid-dev"] = "homeid"
+        await client.tuya_session("hid-dev")
+        await client.tuya_session("pet-dev")
+        assert fake_tuya.country_codes[HOMEID.tuya_app["app_id"]] == "31"
+        assert fake_tuya.country_codes[PET_SERIES.tuya_app["app_id"]] == "1"
 
 
 class TestSigners:

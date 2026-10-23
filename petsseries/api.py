@@ -82,6 +82,11 @@ class PetsSeriesClient:
         # login cap (USER_SESSION_LIMIT), so each is logged in once and reused
         # until it expires.
         self._tuya_sessions: Dict[str, TuyaSession] = {}
+        # Dial code of the account's country for the Tuya thirdLogin of an app
+        # without a fixed code (HomeID). Set per client, so two clients for
+        # accounts in different countries do not share the process-wide
+        # PETSERIES_TUYA_COUNTRY_CODE.
+        self.tuya_country_code: Optional[str] = None
         self._tuya_lock = asyncio.Lock()
         # Device id -> backend key, filled by get_devices(). A device the client
         # has not listed yet is taken to be a Pet Series app device.
@@ -582,7 +587,7 @@ class PetsSeriesClient:
             settings: Dictionary of settings to update.
 
         Returns:
-            bool: True if update was successful (HTTP 204), False otherwise.
+            bool: True if update was successful (HTTP 200 or 204), False otherwise.
 
         Raises:
             PetsSeriesAPIError: If the API request fails.
@@ -601,7 +606,7 @@ class PetsSeriesClient:
         payload = {"settings": settings}
         session = await self.get_client()
         async with session.patch(url, headers=headers, json=payload) as response:
-            if response.status == HTTPStatus.NO_CONTENT:
+            if response.status in (HTTPStatus.OK, HTTPStatus.NO_CONTENT):
                 _LOGGER.info("Device %s settings updated successfully.", device_id)
                 return True
 
@@ -859,8 +864,8 @@ class PetsSeriesClient:
         """(Re)establish one app's cached Tuya session from the Philips token.
 
         country_code is the Tuya thirdLogin countryCode. Without it the
-        backend's own value applies, and without that tuya_mobile uses
-        PETSERIES_TUYA_COUNTRY_CODE, then "1".
+        backend's own value applies, then the client's tuya_country_code,
+        and without those tuya_mobile uses PETSERIES_TUYA_COUNTRY_CODE, then "1".
         """
         old = self._tuya_sessions.pop(backend.key, None)
         if old is not None:
@@ -874,7 +879,8 @@ class PetsSeriesClient:
         try:
             client = TuyaMobileClient(build_signer(backend), http)
             data = await client.login_with_philips_token(
-                self.auth.id_token, country_code or backend.tuya_country_code or None
+                self.auth.id_token,
+                country_code or backend.tuya_country_code or self.tuya_country_code or None,
             )
         except BaseException:
             await http.close()

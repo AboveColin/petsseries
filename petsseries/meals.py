@@ -21,13 +21,14 @@ def _wire_time(value: Any) -> str:
     """Return a meal time in the "HH:mm" form that both app backends take.
 
     The apps send CreateMealRequest.time as "HH:mm" and the backends return
-    the same form. A datetime.time, "HH:mm", "HH:mm:ss" and "HH:mmZ" are
-    accepted. Anything else raises, because a time the backend reads
-    differently would feed the animal at the wrong hour.
+    the same form. A datetime.time, "HH:mm" and "HH:mm:ss" are accepted.
+    Anything else raises, because a time the backend reads differently would
+    feed the animal at the wrong hour. That includes "HH:mmZ": a reader can
+    take the "Z" as UTC, and this function does not know the home's offset.
     """
     if hasattr(value, "hour") and hasattr(value, "minute"):
         return f"{int(value.hour):02d}:{int(value.minute):02d}"
-    match = re.match(r"^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?Z?$", str(value).strip())
+    match = re.match(r"^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$", str(value).strip())
     if match is None:
         raise ValueError(f"Meal time must be HH:mm, got {value!r}")
     hour, minute = int(match.group(1)), int(match.group(2))

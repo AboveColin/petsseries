@@ -323,7 +323,6 @@ class TestRequestValues:
             ("7:05", "07:05"),
             ("07:05", "07:05"),
             ("07:05:00", "07:05"),
-            ("07:05Z", "07:05"),
             (time(23, 59), "23:59"),
         ],
     )
@@ -334,7 +333,7 @@ class TestRequestValues:
         await meals.update_meal(HOME, a_meal(feed_time=given))
         assert api.bodies[-1]["time"] == sent
 
-    @pytest.mark.parametrize("given", ["7", "24:00", "07:60", "breakfast", ""])
+    @pytest.mark.parametrize("given", ["7", "24:00", "07:60", "07:05Z", "breakfast", ""])
     async def test_a_time_the_backend_cannot_read_is_refused(
         self, api: FakeApi, meals: MealsManager, given: str
     ) -> None:
