@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from petsseries.models import (
+    VoiceRecording,
     AppRelease,
     CountryInfo,
     Device,
@@ -170,6 +171,26 @@ class TestDeviceSettings:
         audio = FeederVoiceAudio.from_dict({"audioId": "a1", "url": "u", "recorded": True})
         assert audio is not None
         assert audio.audio_id == "a1"
+
+    def test_voice_audio_is_read_from_value_as_both_backends_send_it(self) -> None:
+        audio = FeederVoiceAudio.from_dict(
+            {"value": "12345678", "type": "string", "writable": True, "category": "feeder"}
+        )
+        assert audio is not None
+        assert audio.audio_id == "12345678"
+
+    def test_an_unset_voice_is_an_empty_id(self) -> None:
+        audio = FeederVoiceAudio.from_dict({"value": "", "type": "string"})
+        assert audio is not None
+        assert audio.audio_id == ""
+
+    def test_a_voice_recording_is_read(self) -> None:
+        recording = VoiceRecording.from_dict(
+            {"id": 12345678, "name": "dinner", "duration": 3000, "url": "https://x/y", "isPreset": False}
+        )
+        assert recording == VoiceRecording(
+            id="12345678", name="dinner", duration_ms=3000, url="https://x/y"
+        )
 
     def test_missing_voice_audio_is_absent(self) -> None:
         assert FeederVoiceAudio.from_dict(None) is None

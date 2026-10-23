@@ -31,6 +31,7 @@ from .models import (
     Home,
     ModeDevice,
     User,
+    VoiceRecording,
 )
 from .session import create_ssl_context
 from .tuya_cloud import get_tuya_credentials_from_philips, tuya_mobile_action_from_philips
@@ -1020,6 +1021,31 @@ class PetsSeriesClient:
                 f"{result.get('errorCode') or 'unknown'} {result.get('errorMsg') or ''}".strip()
             )
         return True
+
+    async def get_voice_recordings(self, device_id: str) -> list[VoiceRecording]:
+        """List the meal voice recordings of a feeder.
+
+        The app reads them with ``tuya.m.audio.by.code.get`` and the code
+        ``FeederVoice``. The backend setting ``feeder_voice_audio_id`` holds
+        the id of the recording that the feeder plays.
+        """
+        if not self.auth.id_token:
+            return []
+        result = await self._tuya_action(
+            "tuya.m.audio.by.code.get",
+            {"devId": device_id, "code": "FeederVoice"},
+            device_id=device_id,
+        )
+        value = result.get("result") if isinstance(result, dict) else None
+        items = value.get("audioInfoVOList") if isinstance(value, dict) else None
+        return [VoiceRecording.from_dict(item) for item in items or [] if isinstance(item, dict)]
+
+    async def play_voice(self, device_id: str) -> bool:
+        """Play the meal voice on the feeder, as the app's test button does.
+
+        The app writes ``{"208": "0"}`` (feed_voice_record) for this.
+        """
+        return await self.publish_cloud_dps(device_id, {"208": "0"})
 
     def toggle_tuya_switch(self, dp_code: str) -> bool:
         """

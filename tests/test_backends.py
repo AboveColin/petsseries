@@ -10,6 +10,7 @@ rather than a shorter list, and Tuya calls run in the device's own app.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -21,7 +22,7 @@ from petsseries import HOMEID, PET_SERIES, backend_for
 from petsseries.api import PetsSeriesClient
 from petsseries.config import Config
 from petsseries.exceptions import PetsSeriesAPIError
-from petsseries.models import Home
+from petsseries.models import Device, Home
 from petsseries.tuya_app import build_signer
 
 
@@ -31,6 +32,7 @@ class FakeBackend:
     def __init__(self) -> None:
         self.app = web.Application()
         self.paths: list[str] = []
+        self.queries: list[str] = []
         self.bodies: list[object] = []
         self.routes: dict[str, tuple[int, object]] = {}
         self.app.router.add_route("*", "/{tail:.*}", self._dispatch)
@@ -41,6 +43,7 @@ class FakeBackend:
 
     async def _dispatch(self, request: web.Request) -> web.StreamResponse:
         self.paths.append(request.path)
+        self.queries.append(request.query_string)
         if request.can_read_body:
             self.bodies.append(await request.json())
         status, payload = self.routes.get(request.path, (404, {"message": "no route"}))
@@ -387,3 +390,79 @@ class TestSigners:
         monkeypatch.setenv("PETSERIES_TUYA_SIGNER", "/nonexistent/signer")
         assert type(build_signer(HOMEID)).__name__ == "PurePythonTuyaSigner"
         assert type(build_signer(PET_SERIES)).__name__ != "PurePythonTuyaSigner"
+
+
+class TestVoiceAndEvents:
+    @pytest.mark.asyncio
+    async def test_the_voice_is_set_with_value_on_the_homes_backend(
+        self, client: PetsSeriesClient, backends: tuple[FakeBackend, FakeBackend]
+    ) -> None:
+        pet, homeid = backends
+        client.devices_manager.config = client.config
+        homeid.json("/api/homes/h1/devices/d1/settings", None, status=204)
+
+        ok = await client.devices_manager.update_device_settings(
+            Home(id="h1", name="x", backend="homeid"),
+            Device(id="d1", name="feeder"),
+            feeder_voice_audio_id="12345678",
+        )
+
+        assert ok is True
+        assert homeid.bodies == [{"feeder_voice_audio_id": {"value": "12345678"}}]
+        assert pet.paths == []
+
+    @pytest.mark.asyncio
+    async def test_events_ask_for_the_page_size(
+        self, client: PetsSeriesClient, backends: tuple[FakeBackend, FakeBackend]
+    ) -> None:
+        _, homeid = backends
+        client.events.config = client.config
+        homeid.json("/api/homes/h1/events", {"item": []})
+        now = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+        await client.events.get_events(
+            Home(id="h1", name="x", backend="homeid"), now, now, size=200
+        )
+        await client.events.get_events(Home(id="h1", name="x", backend="homeid"), now, now)
+
+        assert "size=200" in homeid.queries[0]
+        assert "size" not in homeid.queries[1]
+
+    @pytest.mark.asyncio
+    async def test_voice_recordings_are_listed_from_the_tuya_cloud(
+        self, client: PetsSeriesClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def action(name: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+            calls.append((name, payload))
+            return {
+                "success": True,
+                "result": {
+                    "limitNum": 5,
+                    "audioInfoVOList": [{"id": 12345678, "name": "dinner", "duration": 3000}],
+                },
+            }
+
+        monkeypatch.setattr(client, "_tuya_action", action)
+
+        recordings = await client.get_voice_recordings("tuya-dev")
+
+        assert calls == [("tuya.m.audio.by.code.get", {"devId": "tuya-dev", "code": "FeederVoice"})]
+        assert [(r.id, r.name, r.duration_ms) for r in recordings] == [("12345678", "dinner", 3000)]
+
+    @pytest.mark.asyncio
+    async def test_play_voice_writes_dp_208_as_the_app_does(
+        self, client: PetsSeriesClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def action(name: str, payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+            calls.append((name, payload))
+            return {"success": True}
+
+        monkeypatch.setattr(client, "_tuya_action", action)
+
+        assert await client.play_voice("tuya-dev") is True
+        assert calls[0][0] == "thing.m.device.dp.publish"
+        assert calls[0][1]["dps"] == '{"208":"0"}'

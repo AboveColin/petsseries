@@ -36,6 +36,7 @@ from .models import (
     Meal,
     ModeDevice,
     User,
+    VoiceRecording,
 )
 from .tuya_cloud import TuyaCloudClient, get_tuya_credentials_from_philips
 from .enhanced_credentials import (
@@ -94,6 +95,7 @@ __all__ = [
     "DeviceSettings",
     "FilterTime",
     "FeederVoiceAudio",
+    "VoiceRecording",
     "DiscoveryConfig",
     "AppRelease",
     "CountryInfo",

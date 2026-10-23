@@ -602,6 +602,9 @@ class FeederVoiceAudio:
     """
     Represents feeder voice audio settings.
 
+    Both backends send ``{"value": "<id>", "type": "string", ...}``. The id is
+    the Tuya FeederVoice recording that the feeder plays, "" if none is set.
+
     Attributes:
         audio_id (str): Unique identifier for the audio.
         url (Optional[str]): URL to download/upload the audio.
@@ -618,9 +621,38 @@ class FeederVoiceAudio:
         if not data:
             return None
         return cls(
-            audio_id=data.get("audioId", ""),
+            audio_id=str(data.get("value", data.get("audioId")) or ""),
             url=data.get("url"),
             recorded=data.get("recorded", False),
+        )
+
+
+@dataclass
+class VoiceRecording:
+    """
+    One meal voice recording in the Tuya cloud (code ``FeederVoice``).
+
+    Attributes:
+        id (str): Recording id, the value of ``feeder_voice_audio_id``.
+        name (str): The name the user gave the recording.
+        duration_ms (Optional[int]): Length in milliseconds.
+        url (Optional[str]): Signed download URL. It expires.
+    """
+
+    id: str
+    name: str
+    duration_ms: Optional[int] = None
+    url: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "VoiceRecording":
+        """Create a VoiceRecording from a ``tuya.m.audio.by.code.get`` item."""
+        duration = data.get("duration")
+        return cls(
+            id=str(data.get("id", "")),
+            name=str(data.get("name") or ""),
+            duration_ms=int(duration) if isinstance(duration, (int, float)) else None,
+            url=data.get("url"),
         )
 
 

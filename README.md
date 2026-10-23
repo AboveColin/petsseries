@@ -259,6 +259,28 @@ for event in events:
     print(event)
 ```
 
+The backend returns the newest 50 events by default. Pass `size` (at most 200)
+to get more in one call:
+
+```python
+events = await client.get_events(home, from_date, to_date, size=200)
+```
+
+### Meal Voice
+A feeder plays a recording at a meal. Record voices in the Philips app; the
+client lists them, sets the active one and plays it on the feeder.
+
+```python
+recordings = await client.get_voice_recordings(tuya_device_id)
+for recording in recordings:
+    print(recording.id, recording.name, recording.duration_ms)
+
+await client.devices_manager.update_device_settings(
+    home, device, feeder_voice_audio_id=recordings[0].id
+)
+await client.play_voice(tuya_device_id)
+```
+
 ### Get Meals
 ```python
 for home in homes:

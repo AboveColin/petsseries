@@ -6,7 +6,7 @@ EventsManager module for handling event-related operations in the PetsSeriesClie
 
 import logging
 import urllib.parse
-from typing import List
+from typing import List, Optional
 
 import aiohttp  # type: ignore[import-not-found]
 
@@ -44,7 +44,12 @@ class EventsManager:
         self.config = Config()
 
     async def get_events(
-        self, home: Home, from_date, to_date, types: str = "none"
+        self,
+        home: Home,
+        from_date,
+        to_date,
+        types: str = "none",
+        size: Optional[int] = None,
     ) -> List[Event]:
         """
         Get events for the selected home within a date range.
@@ -54,6 +59,9 @@ class EventsManager:
             from_date (datetime): The start date for event retrieval.
             to_date (datetime): The end date for event retrieval.
             types (str): Comma-separated event types to filter by.
+            size (Optional[int]): Page size. The backend default is 50.
+                Both backends accept 200, and HomeID allows no more. The
+                newest events come first.
 
         Returns:
             List[Event]: A list of Event objects.
@@ -98,6 +106,7 @@ class EventsManager:
             f"{self.config.home_url(home)}/events"
             f"?from={from_date_encoded}&to={to_date_encoded}&clustered={clustered}"
             f"{types_param}"
+            f"{f'&size={int(size)}' if size else ''}"
         )
         _LOGGER.debug("Getting events from %s", url)
         session = await self.client.get_client()

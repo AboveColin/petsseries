@@ -222,8 +222,9 @@ class DevicesManager:
                 "value": filter_application_time,
             }
         if feeder_voice_audio_id is not None:
+            # The app's DeviceSettingsRequest sends only "value".
             payload["feeder_voice_audio_id"] = {
-                "audioId": feeder_voice_audio_id,
+                "value": feeder_voice_audio_id,
             }
 
         if not payload:
